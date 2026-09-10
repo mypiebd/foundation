@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}Courses · {{ org_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1 class="page-title">Courses</h1>
+    <p class="page-sub">Open a course to enrol students and see its assessments.</p></div>
+  <div class="head-actions">
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCourse">Create a course</button>
+    <a class="btn btn-outline-dark" href="{{ url_for('admin.courses', archived='0' if show_archived else '1') }}">
+      {{ 'Hide archived' if show_archived else 'Show archived' }}</a>
+  </div>
+</div>
+
+<div class="panel p-0">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0 list-table">
+      <thead><tr><th>Code</th><th>Course</th><th>Branch</th><th>Teachers</th>
+                 <th class="text-end">Students</th><th class="text-end">Assessments</th><th></th></tr></thead>
+      <tbody>
+      {% for c in items %}
+        <tr {% if c.is_archived %}class="row-muted"{% endif %}>
+          <td>{{ m.plain_code(c) }}</td>
+          <td><a href="{{ url_for('admin.course_detail', course_id=c.id) }}">{{ c.course_name }}</a>
+            {% if c.is_archived %}<span class="pill pill-off">Archived</span>{% endif %}
+            <div class="sub">{{ c.description or '—' }}</div></td>
+          <td class="small">{{ c.branch or '—' }}</td>
+          <td class="small">{{ stats[c.id].teachers|join(', ') if stats[c.id].teachers else '—' }}</td>
+          <td class="text-end mono">{{ stats[c.id].students }}</td>
+          <td class="text-end mono">{{ stats[c.id].assessments }}</td>
+          <td class="text-end nowrap">
+            <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin.course_detail', course_id=c.id) }}">Open</a>
+            <form class="d-inline" method="post" action="{{ url_for('admin.archive_course', course_id=c.id) }}">
+              <button class="btn btn-sm btn-link">{{ 'Restore' if c.is_archived else 'Archive' }}</button></form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="empty-line p-4">No courses yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal fade" id="addCourse" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content" method="post" action="{{ url_for('admin.create_course') }}">
+      <div class="modal-header"><h5 class="modal-title">Create a course</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label">Course code</label>
+          <input class="form-control mono" name="course_code" placeholder="EAP101" required></div>
+        <div class="mb-3"><label class="form-label">Course name</label>
+          <input class="form-control" name="course_name" required></div>
+        <div class="mb-3"><label class="form-label">Branch</label>
+          <select class="form-select" name="branch"><option value="">—</option>
+            {% for b in BRANCHES %}<option value="{{ b }}">{{ b }}</option>{% endfor %}</select></div>
+        <div><label class="form-label">Description</label>
+          <textarea class="form-control" name="description" rows="3"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary">Create course</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

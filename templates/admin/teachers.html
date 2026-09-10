@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}Teachers · {{ org_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1 class="page-title">Teachers</h1>
+    <p class="page-sub">Accounts, workload and blocked days.</p></div>
+  <div class="head-actions">
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addTeacher">Add a teacher</button>
+    <a class="btn btn-outline-dark" href="{{ url_for('admin.credentials_export', role='TEACHER') }}">Logins CSV</a>
+  </div>
+</div>
+
+<form class="filter-bar" method="get">
+  <div class="fb-search">
+    <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Search by name, username or phone">
+  </div>
+  <select class="form-select" name="branch">
+    <option value="">All branches</option>
+    {% for b in BRANCHES %}<option value="{{ b }}" {% if filters.branch == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+  </select>
+  <select class="form-select" name="status">
+    <option value="ACTIVE" {% if filters.status == 'ACTIVE' %}selected{% endif %}>Active</option>
+    <option value="ARCHIVED" {% if filters.status == 'ARCHIVED' %}selected{% endif %}>Archived</option>
+    <option value="ALL" {% if filters.status == 'ALL' %}selected{% endif %}>Active + archived</option>
+  </select>
+  <button class="btn btn-primary">Search</button>
+  <a class="btn btn-link" href="{{ url_for('admin.teachers') }}">Clear</a>
+</form>
+
+<div class="row g-4">
+  <div class="col-lg-8">
+    <form method="post" action="{{ url_for('admin.people_action') }}">
+      <input type="hidden" name="back" value="{{ request.full_path }}">
+      <div class="panel p-0">
+        <div class="bulk-bar">
+          <span class="selected-count" data-selected-count>No one selected</span>
+          <div class="bulk-buttons">
+            <button class="btn btn-sm btn-outline-dark" name="action" value="reset">Reset passwords</button>
+            {% if filters.status == 'ARCHIVED' %}
+              <button class="btn btn-sm btn-outline-dark" name="action" value="restore">Restore</button>
+            {% else %}
+              <button class="btn btn-sm btn-outline-dark" name="action" value="archive">Archive</button>
+            {% endif %}
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table align-middle mb-0 list-table">
+            <thead><tr>
+              <th class="tick"><input class="form-check-input" type="checkbox" data-select-all></th>
+              <th>Username</th><th>Name</th><th>Phone</th><th>Branch</th>
+              <th class="text-end">Courses</th><th class="text-end">Students</th><th>First password</th>
+            </tr></thead>
+            <tbody>
+            {% for t in page.items %}
+              <tr>
+                <td class="tick"><input class="form-check-input" type="checkbox" name="user_ids" value="{{ t.id }}" data-row-tick></td>
+                <td class="mono">{{ t.username }}</td>
+                <td>{{ t.full_name }}{% if t.status == 'ARCHIVED' %} {{ m.status_pill(t) }}{% endif %}</td>
+                <td class="mono small">{{ t.phone or '—' }}</td>
+                <td class="small">{{ t.branch or '—' }}</td>
+                <td class="text-end mono">{{ loads[t.id].courses }}</td>
+                <td class="text-end mono">{{ loads[t.id].students }}</td>
+                <td class="mono small text-muted">{{ t.initial_password or 'changed' }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="8" class="empty-line p-4">No teachers match that search.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {{ m.pager(page, 'admin.teachers', page_args()) }}
+    </form>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="panel">
+      <h2 class="panel-title">Block a teaching day</h2>
+      <p class="panel-hint">On a blocked date that teacher cannot mark attendance or log a lesson.</p>
+      <form method="post" action="{{ url_for('admin.add_off_day') }}">
+        <div class="mb-3"><label class="form-label">Teacher</label>
+          <select class="form-select" name="teacher_id" required>
+            <option value="">Choose a teacher</option>
+            {% for t in teachers_all %}<option value="{{ t.id }}">{{ t.full_name }}</option>{% endfor %}
+          </select></div>
+        <div class="mb-3"><label class="form-label">Date</label>
+          <input type="date" class="form-control" name="off_date" value="{{ today_str }}" required></div>
+        <div class="mb-3"><label class="form-label">Reason</label>
+          <input class="form-control" name="reason" placeholder="Public holiday, leave, training"></div>
+        <button class="btn btn-primary w-100">Block the day</button>
+      </form>
+    </div>
+
+    <div class="panel mt-4">
+      <h2 class="panel-title">Upcoming blocked days</h2>
+      {% if off_days %}
+        <table class="table table-sm align-middle mb-0">
+          <tbody>
+          {% for o in off_days %}
+            <tr>
+              <td class="mono small nowrap">{{ o.off_date.strftime('%d %b %Y') }}</td>
+              <td class="small">{{ o.teacher.full_name }}<div class="sub">{{ o.reason or '—' }}</div></td>
+              <td class="text-end">
+                <form method="post" action="{{ url_for('admin.delete_off_day', off_id=o.id) }}">
+                  <button class="btn btn-sm btn-link">Clear</button></form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% else %}<p class="empty-line">Nothing blocked ahead.</p>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="addTeacher" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content" method="post" action="{{ url_for('admin.create_teacher') }}">
+      <div class="modal-header"><h5 class="modal-title">Add a teacher</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="mb-3"><label class="form-label">Full name</label>
+          <input class="form-control" name="full_name" required></div>
+        <div class="mb-3"><label class="form-label">Username</label>
+          <input class="form-control" name="username" placeholder="built from the name if left blank"></div>
+        <div class="mb-3"><label class="form-label">Phone</label>
+          <input class="form-control" name="phone"></div>
+        <div class="mb-3"><label class="form-label">Email</label>
+          <input type="email" class="form-control" name="email"></div>
+        <div><label class="form-label">Branch</label>
+          <select class="form-select" name="branch">
+            <option value="">—</option>
+            {% for b in BRANCHES %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+          </select></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary">Create teacher</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

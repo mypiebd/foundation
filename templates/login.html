@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Sign in · {{ org_name }}{% endblock %}
+{% block content %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-mark">
+      <span class="wm-into">INTO</span><span class="wm-chev">&rsaquo;&rsaquo;</span><span class="wm-pie">PIE</span>
+    </div>
+    <h1 class="login-title">Pathways</h1>
+    <p class="login-sub">Sign in with the ID and password the office gave you.</p>
+    <form method="post" novalidate>
+      <div class="mb-3">
+        <label class="form-label" for="username">Student ID or username</label>
+        <input class="form-control form-control-lg" id="username" name="username"
+               autocomplete="username" autofocus required>
+      </div>
+      <div class="mb-4">
+        <label class="form-label" for="password">Password</label>
+        <input type="password" class="form-control form-control-lg" id="password"
+               name="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary btn-lg w-100" type="submit">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

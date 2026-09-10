@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}My courses · {{ org_name }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">My courses</h1>
+    <p class="page-sub">{{ current_user.full_name }} · figures cover {{ window_label|lower }}.</p>
+  </div>
+  {{ m.term_filter(terms, window_label) }}
+</div>
+
+{% if notices %}
+<div class="panel panel-flag mb-4">
+  <h2 class="panel-title">From the office <span class="count-pill">{{ notices|length }}</span></h2>
+  <ul class="notice-list">
+  {% for n in notices %}
+    <li class="notice {% if n.is_urgent %}is-urgent{% endif %}">
+      <div class="notice-meta">
+        <span class="notice-scope">{{ n.scope }}</span>
+        {% if n.is_urgent %}<span class="notice-tag urgent">Urgent</span>{% endif %}
+        <span class="ms-auto mono">{{ n.created_at.strftime('%d %b') }}</span>
+      </div>
+      <h3 class="notice-title">{{ n.title }}</h3>
+      {% if n.body %}<p class="notice-body">{{ n.body }}</p>{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if off_days %}
+<div class="alert alert-warning">
+  Blocked days ahead:
+  {% for o in off_days %}<strong>{{ o.off_date.strftime('%d %b') }}</strong>{% if o.reason %} ({{ o.reason }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}.
+  You can't take a register or log a lesson on those dates.
+</div>
+{% endif %}
+
+{% if cards %}
+<div class="row g-3">
+  {% for c in cards %}
+  <div class="col-md-6 col-xl-4">
+    <a class="course-card" href="{{ url_for('teacher.course', course_id=c.course.id) }}">
+      <span class="cc-code">{{ c.course.course_code }}</span>
+      <h2 class="cc-name">{{ c.course.course_name }}</h2>
+      <div class="cc-stats">
+        <span><strong>{{ c.students }}</strong> students</span>
+        <span><strong>{{ c.sessions }}</strong> sessions</span>
+        <span class="{% if c.attendance < 75 %}text-warn{% endif %}"><strong>{{ c.attendance }}%</strong> attendance</span>
+      </div>
+      {% if c.pending %}
+        <span class="cc-flag">{{ c.pending }} piece(s) of work to mark</span>
+      {% endif %}
+      <span class="cc-last">
+        {% if c.last %}Last class {{ c.last.class_date.strftime('%d %b') }} — {{ c.last.topic_taught|truncate(48) }}
+        {% else %}No class logged yet{% endif %}
+      </span>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h2 class="h5">No classes yet</h2>
+  <p class="text-muted mb-0">The office hasn't allocated any courses to you.</p>
+</div>
+{% endif %}
+{% endblock %}

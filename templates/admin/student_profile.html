@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}{{ student.full_name }} · {{ org_name }}{% endblock %}
+
+{% block content %}
+<div class="profile-head">
+  <div class="ph-left">
+    <p class="ph-back">
+      <a href="{{ url_for('admin.students') if current_user.is_admin else url_for('teacher.my_courses') }}">&larr; Back</a>
+    </p>
+    <h1 class="page-title mb-1">{{ student.full_name }}</h1>
+    <p class="ph-meta">
+      <span class="mono">{{ student.username }}</span>
+      {% if student.branch %}<span>{{ student.branch }}</span>{% endif %}
+      {% if student.batch %}<span>{{ student.batch.name }}</span>{% endif %}
+      {% if student.phone %}<span class="mono">{{ student.phone }}</span>{% endif %}
+      {% if student.email %}<span>{{ student.email }}</span>{% endif %}
+      {% if student.status == 'ARCHIVED' %}{{ m.status_pill(student) }}{% endif %}
+    </p>
+  </div>
+  <div class="ph-figures">
+    <div class="figure {% if overall.held and overall.percent < 75 %}is-low{% endif %}">
+      <span class="figure-number">{{ overall.percent }}<span class="figure-unit">%</span></span>
+      <span class="figure-label">attendance · {{ overall.attended }} of {{ overall.held }}</span>
+    </div>
+    <div class="figure">
+      <span class="figure-number">{{ average if average is not none else '—' }}{% if average is not none %}<span class="figure-unit">%</span>{% endif %}</span>
+      <span class="figure-label">average mark</span>
+    </div>
+  </div>
+</div>
+
+<div class="page-head">
+  <div class="head-actions">
+    <a class="btn btn-primary" href="{{ url_for('admin.student_report', student_id=student.id, **request.args) }}">
+      Download report {% if not pdf_available %}(print view){% endif %}
+    </a>
+    <button class="btn btn-outline-dark" onclick="window.print()">Print</button>
+  </div>
+  {{ m.term_filter(terms, window_label) }}
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="panel">
+      <h2 class="panel-title">Attendance by course — {{ window_label|lower }}</h2>
+      {% if per_course %}
+      <table class="table align-middle mb-0">
+        <thead><tr><th>Course</th><th>Teacher</th><th class="text-end">Held</th>
+                   <th class="text-end">Late</th><th class="text-end">Absent</th>
+                   <th style="width:140px">Rate</th></tr></thead>
+        <tbody>
+        {% for r in per_course %}
+          <tr>
+            <td>{{ m.plain_code(r.course) }}<div class="sub">{{ r.course.course_name }}</div></td>
+            <td class="small">{{ r.teacher.full_name if r.teacher else '—' }}</td>
+            <td class="text-end mono">{{ r.held }}</td>
+            <td class="text-end mono">{{ r.late }}</td>
+            <td class="text-end mono">{{ r.absent }}</td>
+            <td>{{ m.meter(r.percent, r.held) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="empty-line">Not enrolled in any course.</p>{% endif %}
+    </div>
+
+    <div class="panel mt-4">
+      <h2 class="panel-title">Results</h2>
+      {% if results %}
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Course</th><th>Assessment</th><th class="text-end">Score</th>
+                   <th class="text-end">%</th><th>Feedback</th></tr></thead>
+        <tbody>
+        {% for r in results %}
+          <tr>
+            <td>{{ m.plain_code(r.assessment.course) }}</td>
+            <td>{{ r.assessment.title }}<div class="sub">{{ r.assessment.kind }}
+              {% if r.assessment.assigned_date %}· {{ r.assessment.assigned_date.strftime('%d %b %Y') }}{% endif %}</div></td>
+            <td class="text-end mono">{{ '%g'|format(r.score) }}/{{ '%g'|format(r.assessment.max_score) }}</td>
+            <td class="text-end mono {% if r.percent is not none and r.percent < 40 %}text-warn{% endif %}">{{ r.percent }}%</td>
+            <td class="small text-muted">{{ r.feedback or '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="empty-line">No marked work in this period.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    {% if outstanding %}
+    <div class="panel panel-flag">
+      <h2 class="panel-title">Not yet submitted <span class="count-pill">{{ outstanding|length }}</span></h2>
+      <ul class="plain-list">
+        {% for a in outstanding %}
+          <li><strong>{{ a.title }}</strong>
+            <span class="sub">{{ m.plain_code(a.course) }}
+              {% if a.due_date %}· due {{ a.due_date.strftime('%d %b %Y') }}{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <div class="panel {% if outstanding %}mt-4{% endif %}">
+      <h2 class="panel-title">Days missed</h2>
+      {% if missed %}
+        <div class="chip-row">
+          {% for r in missed %}
+            <span class="miss-chip">{{ r.date.strftime('%d %b') }} · {{ r.course.course_code }}</span>
+          {% endfor %}
+        </div>
+      {% else %}<p class="empty-line">No absences in this period.</p>{% endif %}
+    </div>
+
+    <div class="panel mt-4">
+      <h2 class="panel-title">Recent attendance</h2>
+      {% if recent %}
+      <table class="table table-sm align-middle mb-0">
+        <tbody>
+        {% for r in recent %}
+          <tr>
+            <td class="mono small nowrap">{{ r.date.strftime('%d %b %Y') }}</td>
+            <td>{{ m.plain_code(r.course) }}</td>
+            <td class="text-end">
+              <span class="pill {% if r.status == 'Present' %}pill-on{% elif r.status == 'Late' %}pill-late{% else %}pill-off{% endif %}">{{ r.status }}</span>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="empty-line">Nothing recorded yet.</p>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}Dashboard · {{ org_name }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-sub">Showing {{ window_label|lower }}.</p>
+  </div>
+  {{ m.term_filter(terms, window_label) }}
+</div>
+
+{% if show_setup %}
+<div class="panel panel-flag mb-4">
+  <h2 class="panel-title">Start here</h2>
+  <p class="panel-hint">Work down this list once. Each step unlocks the next —
+    teachers and students see nothing until step 6 is done.</p>
+  <ol class="setup-list">
+    {% for step in setup %}
+      <li class="{% if step.done %}is-done{% endif %}">
+        <span class="setup-mark">{{ '✓' if step.done else loop.index }}</span>
+        <span class="setup-body">
+          <a href="{{ step.where }}">{{ step.label }}</a>
+          <span class="sub">{{ step.why }}</span>
+        </span>
+      </li>
+    {% endfor %}
+  </ol>
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <a class="stat-card" href="{{ url_for('admin.students') }}">
+      <span class="stat-value">{{ counts.students }}</span>
+      <span class="stat-label">Active students</span></a>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a class="stat-card" href="{{ url_for('admin.teachers') }}">
+      <span class="stat-value">{{ counts.teachers }}</span>
+      <span class="stat-label">Teachers</span></a>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a class="stat-card" href="{{ url_for('admin.courses') }}">
+      <span class="stat-value">{{ counts.courses }}</span>
+      <span class="stat-label">Courses</span></a>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a class="stat-card {% if storage.over_budget %}is-warn{% endif %}" href="{{ url_for('admin.storage') }}">
+      <span class="stat-value">{{ storage.mb }}<span class="stat-unit">MB</span></span>
+      <span class="stat-label">Files stored, of {{ storage.hard_mb }} MB</span></a>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">Attendance below 75%</h2>
+        <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin.reports', below=75) }}">Full report</a>
+      </div>
+      {% if at_risk %}
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Student</th><th class="text-end">Held</th>
+                     <th class="text-end">Attended</th><th style="width:130px">Rate</th></tr></thead>
+          <tbody>
+          {% for r in at_risk %}
+            <tr>
+              <td><a href="{{ url_for('admin.student_profile', student_id=r.student.id) }}">{{ r.student.full_name }}</a>
+                <div class="sub mono">{{ r.student.username }}</div></td>
+              <td class="text-end mono">{{ r.held }}</td>
+              <td class="text-end mono">{{ r.attended }}</td>
+              <td>{{ m.meter(r.percent, r.held) }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% else %}<p class="empty-line">Nobody is below 75% in this period.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="panel">
+      <h2 class="panel-title">Work waiting to be marked</h2>
+      {% if unmarked %}
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Course</th><th>Assessment</th><th>Teacher</th><th>Set</th></tr></thead>
+          <tbody>
+          {% for a in unmarked %}
+            <tr>
+              <td>{{ m.plain_code(a.course) }}</td>
+              <td>{{ a.title }}<div class="sub">{{ a.kind }}</div></td>
+              <td class="small">{{ a.teacher.full_name }}</td>
+              <td class="mono small nowrap">{{ a.assigned_date.strftime('%d %b') }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% else %}<p class="empty-line">Everything set has been marked.</p>{% endif %}
+    </div>
+
+    <div class="panel mt-4">
+      <h2 class="panel-title">Latest classes taught</h2>
+      {% if lessons %}
+        <table class="table table-sm align-middle mb-0">
+          <tbody>
+          {% for l in lessons %}
+            <tr>
+              <td class="nowrap mono small">{{ l.class_date.strftime('%d %b') }}</td>
+              <td>{{ m.plain_code(l.course) }}</td>
+              <td>{{ l.topic_taught }}<div class="sub">{{ l.teacher.full_name }}</div></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% else %}<p class="empty-line">No classes logged yet.</p>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}Reports · {{ org_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1 class="page-title">Reports</h1>
+    <p class="page-sub">{{ window_label }} · {{ rows|length }} student(s) shown.</p></div>
+  <div class="head-actions">
+    <a class="btn btn-outline-dark" href="{{ url_for('admin.students_export', **request.args) }}">Export this list</a>
+  </div>
+</div>
+
+<form class="filter-bar" method="get">
+  <div class="fb-search">
+    <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Search by name or ID">
+  </div>
+  <select class="form-select" name="branch">
+    <option value="">All branches</option>
+    {% for b in BRANCHES %}<option value="{{ b }}" {% if filters.branch == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+  </select>
+  <select class="form-select" name="batch_id">
+    <option value="">All batches</option>
+    {% for b in batches %}<option value="{{ b.id }}" {% if filters.batch_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
+  </select>
+  <select class="form-select" name="course_id">
+    <option value="">All courses</option>
+    {% for c in courses %}<option value="{{ c.id }}" {% if filters.course_id == c.id %}selected{% endif %}>{{ c.course_code }}</option>{% endfor %}
+  </select>
+  <select class="form-select" name="below">
+    <option value="">Any attendance</option>
+    {% for v in [90, 80, 75, 60, 50] %}
+      <option value="{{ v }}" {% if below == v %}selected{% endif %}>Below {{ v }}%</option>
+    {% endfor %}
+  </select>
+  <select class="form-select" name="term_id">
+    {% for t in terms %}<option value="{{ t.id }}" {% if window_label == t.name %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
+    <option value="all" {% if window_label == 'All time' %}selected{% endif %}>All time</option>
+  </select>
+  <button class="btn btn-primary">Apply</button>
+  <a class="btn btn-link" href="{{ url_for('admin.reports') }}">Clear</a>
+</form>
+
+<div class="panel p-0 mb-4">
+  <div class="panel-pad"><h2 class="panel-title mb-0">Attendance by student</h2></div>
+  <div class="table-responsive scroll-box">
+    <table class="table align-middle mb-0 list-table">
+      <thead><tr><th>Student ID</th><th>Name</th><th>Branch</th><th>Batch</th>
+        <th class="text-end">Held</th><th class="text-end">Attended</th>
+        <th class="text-end">Late</th><th class="text-end">Absent</th>
+        <th style="width:140px">Attendance</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td class="mono">{{ r.student.username }}</td>
+          <td><a href="{{ url_for('admin.student_profile', student_id=r.student.id, **request.args) }}">{{ r.student.full_name }}</a></td>
+          <td class="small">{{ r.student.branch or '—' }}</td>
+          <td class="small">{{ r.student.batch.name if r.student.batch else '—' }}</td>
+          <td class="text-end mono">{{ r.held }}</td>
+          <td class="text-end mono">{{ r.attended }}</td>
+          <td class="text-end mono">{{ r.late }}</td>
+          <td class="text-end mono">{{ r.absent }}</td>
+          <td>{{ m.meter(r.percent, r.held) }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="empty-line p-4">No students match those filters.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel p-0">
+  <div class="panel-pad"><h2 class="panel-title mb-0">By course</h2></div>
+  <div class="table-responsive">
+    <table class="table align-middle mb-0 list-table">
+      <thead><tr><th>Code</th><th>Course</th><th class="text-end">Sessions</th>
+        <th class="text-end">Students</th><th class="text-end">Records</th>
+        <th style="width:140px">Attendance</th><th>Downloads</th></tr></thead>
+      <tbody>
+      {% for r in course_rows %}
+        <tr>
+          <td>{{ m.plain_code(r.course) }}</td>
+          <td><a href="{{ url_for('admin.course_detail', course_id=r.course.id) }}">{{ r.course.course_name }}</a></td>
+          <td class="text-end mono">{{ r.sessions }}</td>
+          <td class="text-end mono">{{ r.enrolled }}</td>
+          <td class="text-end mono">{{ r.held }}</td>
+          <td>{{ m.meter(r.percent, r.held) }}</td>
+          <td class="nowrap">
+            <a class="small" href="{{ url_for('admin.attendance_export', course_id=r.course.id, **request.args) }}">Attendance</a> ·
+            <a class="small" href="{{ url_for('admin.marksheet_export', course_id=r.course.id) }}">Marks</a>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="empty-line p-4">No courses yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
