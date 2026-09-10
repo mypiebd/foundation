@@ -17,13 +17,13 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "static", "uploads")
 
 app = Flask(__name__)
 app.config.update(
-    SECRET_KEY=os.environ.get("LMS_SECRET_KEY", "pie-pathways-change-this-key"),
+    SECRET_KEY=os.environ.get("LMS_SECRET_KEY", "943mr845hdf830dhjf84jsdhe84hd84h"),
     SQLALCHEMY_DATABASE_URI="sqlite:///" + os.path.join(BASE_DIR, "lms.db"),
     SQLALCHEMY_TRACK_MODIFICATIONS=False,
     MAX_CONTENT_LENGTH=5 * 1024 * 1024,          # 5 MB per uploaded file
     UPLOAD_FOLDER=UPLOAD_DIR,
-    STORAGE_BUDGET=250 * 1024 * 1024,            # amber warning above this
-    STORAGE_HARD_LIMIT=350 * 1024 * 1024,        # uploads refused above this
+    STORAGE_BUDGET=8 * 1024 * 1024 * 1024,       # 8 GB
+    STORAGE_HARD_LIMIT=10 * 1024 * 1024 * 1024,  # 10 GB    # uploads refused above this
     ORG_NAME="PIE Pathways",
 )
 os.makedirs(UPLOAD_DIR, exist_ok=True)
