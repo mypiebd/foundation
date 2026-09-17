@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Check this change · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('admin.class_detail', gid=g.id) }}">&larr; Back to the class</a></p>
+    <h1 class="page-title">That change would leave gaps</h1>
+    <p class="page-sub">
+      {{ g.name }} &middot; moving to {{ teacher.full_name }}
+      &middot; <strong>nothing has been changed yet</strong>
+    </p>
+  </div>
+</div>
+
+<div class="alert alert-warning">
+  <div>
+    <strong>{{ problems|length }} of your {{ slots_json|from_json|length }} time(s) will not fit {{ teacher.full_name }}.</strong>
+    The existing timetable is untouched — {{ counts.upcoming }} class(es) are still
+    booked. Choose what to do with each day below, then confirm.
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('admin.class_amend_confirm', gid=g.id) }}">
+<input type="hidden" name="slots_json" value="{{ slots_json }}">
+<input type="hidden" name="teacher_id" value="{{ teacher.id }}">
+<input type="hidden" name="scope" value="{{ scope }}">
+<input type="hidden" name="venue" value="{{ venue }}">
+
+{% set daynames = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}
+{% set proposed = slots_json|from_json %}
+
+{% for i in range(proposed|length) %}
+  {% set raw = proposed[i] %}
+  {% set prob = problems | selectattr('index','equalto',i) | first %}
+
+  {% if prob %}
+  <div class="panel" style="margin-bottom:1rem;border-left:3px solid var(--red)">
+    <div style="display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap;margin-bottom:.5rem">
+      <h3 style="font-family:'Segoe UI',sans-serif;font-size:1.02rem;font-weight:700;margin:0">
+        {{ daynames[raw[0]|int] }}
+        {{ prob.start.strftime('%I:%M %p').lstrip('0') }} –
+        {{ prob.end.strftime('%I:%M %p').lstrip('0') }}
+      </h3>
+      {% if prob.res.status == 'break' %}
+        <span class="pill pill-amber">Needs a break first</span>
+      {% else %}<span class="pill pill-red">Taken</span>{% endif %}
+      <span class="sub" style="margin-left:auto">
+        works on {{ prob.res.ok }} of the next {{ prob.res.total }}
+      </span>
+    </div>
+    <p class="sub" style="margin:0 0 .9rem">{{ prob.res.message }}</p>
+
+    <div class="fix-list">
+      {% for o in prob.opts.teachers %}
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}" value="teacher:{{ o.teacher.id }}">
+        <span><strong>Keep {{ prob.start.strftime('%I:%M %p').lstrip('0') }} —
+          give it to {{ o.teacher.full_name }}</strong>
+          <span class="sub" style="display:block">Same day, same time.
+            {% if o.note %}({{ o.note }}){% endif %}</span></span>
+      </label>
+      {% endfor %}
+
+      {% for t in prob.opts.times %}
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}"
+               value="time:{{ t.start.strftime('%H:%M') }}-{{ t.end.strftime('%H:%M') }}"
+               {{ 'checked' if loop.first }}>
+        <span><strong>Move to {{ t.start.strftime('%I:%M %p').lstrip('0') }} –
+          {{ t.end.strftime('%I:%M %p').lstrip('0') }}</strong>
+          <span class="sub" style="display:block">{{ t.label }}, same day,
+            {{ teacher.full_name }}. Needs telling the students.</span></span>
+      </label>
+      {% endfor %}
+
+      {% if not prob.opts.teachers and not prob.opts.times %}
+      <div class="alert alert-danger" style="margin:0 0 .5rem">
+        <div>Nothing is free on {{ daynames[raw[0]|int] }}s. Leave the day out,
+          or go back and keep the current teacher.</div>
+      </div>
+      {% endif %}
+
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}" value="skip"
+               {{ 'checked' if not prob.opts.times }}>
+        <span><strong>Leave {{ daynames[raw[0]|int] }} out</strong>
+          <span class="sub" style="display:block">
+            The class runs on its other days.</span></span>
+      </label>
+
+      {% if prob.res.ok > 0 %}
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}" value="keep">
+        <span><strong>Use it anyway</strong>
+          <span class="sub" style="display:block">
+            {{ prob.res.ok }} of the next {{ prob.res.total }} dates are free;
+            the rest are left out.</span></span>
+      </label>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="panel" style="margin-bottom:1rem;border-left:3px solid var(--ok);
+              padding:.75rem 1.1rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+    <strong style="font-family:'Segoe UI',sans-serif;font-size:.95rem">
+      {{ daynames[raw[0]|int] }} {{ raw[1] }} – {{ raw[2] }}</strong>
+    <span class="pill pill-green">Fits</span>
+    <input type="hidden" name="fix_{{ i }}" value="keep">
+  </div>
+  {% endif %}
+{% endfor %}
+
+<div class="panel" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+  <button class="btn btn-primary">Confirm the change</button>
+  <a class="btn btn-link" href="{{ url_for('admin.class_detail', gid=g.id) }}">
+    Leave it as it is</a>
+  <span class="sub" style="margin-left:auto">
+    All {{ counts.upcoming }} existing class(es) are still booked until you confirm.
+  </span>
+</div>
+</form>
+
+<style>
+.fix-list{display:flex;flex-direction:column;gap:.4rem}
+.fix{display:flex;align-items:flex-start;gap:.55rem;padding:.6rem .8rem;
+  border:1.5px solid var(--line);border-radius:.3rem;cursor:pointer;
+  background:#fff;font-size:.88rem}
+.fix:hover{border-color:var(--ink-soft)}
+.fix:has(input:checked){border-color:var(--red);background:#fffafa}
+.fix input{margin-top:.22rem;flex-shrink:0}
+</style>
+{% endblock %}

@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}{{ student.full_name }} · Student record{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('viewer.search') }}">&larr; Search</a></p>
+    <h1 class="page-title">{{ student.full_name }}</h1>
+    <p class="page-sub">
+      {{ student.username }}
+      {% if student.phone %} &middot; {{ student.phone }}{% endif %}
+      {% if student.branch %} &middot; {{ student.branch }}{% endif %}
+      &middot; {% if student.is_active %}<span class="pill pill-green">Active</span>
+              {% else %}<span class="pill pill-gray">Archived</span>{% endif %}
+    </p>
+  </div>
+  <div class="head-actions"><span class="pill pill-navy">View only</span></div>
+</div>
+
+<div class="tabs">
+  {% for key, label in [('profile','Profile'),('classes','Classes'),
+                        ('attendance','Attendance'),('marks','Marks'),
+                        ('assignments','Assignments'),('routine','Routine')] %}
+    <a class="tab {{ 'active' if tab == key }}"
+       href="{{ url_for('viewer.student', sid=student.id, tab=key) }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+{% if tab == 'profile' %}
+<div class="panel">
+  <h3 class="form-section-title">Details on file</h3>
+  <div class="tw">
+    <table>
+      <tbody>
+        <tr><td style="width:190px">Full name</td><td>{{ student.full_name }}</td></tr>
+        <tr><td>Student ID</td><td class="mono">{{ student.username }}</td></tr>
+        <tr><td>Phone</td><td class="mono">{{ student.phone or '—' }}</td></tr>
+        <tr><td>Email</td><td>{{ student.email or '—' }}</td></tr>
+        <tr><td>Branch</td><td>{{ student.branch or '—' }}</td></tr>
+        
+        <tr><td>Status</td><td>{{ 'Active' if student.is_active else 'Archived' }}</td></tr>
+        <tr><td>Added</td>
+            <td>{{ student.created_at.strftime('%d %b %Y') if student.created_at else '—' }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% elif tab == 'classes' %}
+<div class="panel p-0" style="margin-bottom:1.1rem">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0">
+      Classes attended <span class="count-pill">{{ memberships|length }}</span></h2>
+  </div>
+  {% if memberships %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Class</th><th>Type</th><th>Subject</th><th>Teacher</th>
+                 <th>When</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for mem in memberships %}
+        {% set g = mem.group %}
+        <tr>
+          <td class="clip" title="{{ g.name }}">{{ g.name }}</td>
+          <td>{% if g.kind == 'Batch' %}<span class="pill pill-green">Batch</span>
+              {% else %}<span class="pill pill-blue">1-on-1</span>{% endif %}</td>
+          <td>{% if g.course %}<span class="pill pill-navy">{{ g.course.course_code }}</span>
+              {% else %}<span class="sub">—</span>{% endif %}</td>
+          <td class="sub">{{ g.teacher.full_name if g.teacher else '—' }}</td>
+          <td style="font-size:.82rem;line-height:1.5">
+            {% for line in g.slot_lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+          </td>
+          <td>{% if g.status == 'Active' %}<span class="pill pill-green">Running</span>
+              {% elif g.status == 'Paused' %}<span class="pill pill-amber">Paused</span>
+              {% else %}<span class="pill pill-gray">Stopped</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">Not attached to any class.</p>
+  {% endif %}
+</div>
+
+{% elif tab == 'attendance' %}
+<p class="sub" style="margin:-.4rem 0 1rem">{{ window_label }}</p>
+{% if courses %}
+<div class="panel p-0" style="margin-bottom:1.1rem">
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Course</th><th>Held</th><th>Attended</th><th>Rate</th></tr></thead>
+      <tbody>
+      {% for c in courses %}
+      <tr>
+        <td><span class="pill pill-navy">{{ c.course.course_code }}</span>
+            <div class="sub">{{ c.course.course_name }}</div></td>
+        <td class="mono">{{ c.att.held }}</td>
+        <td class="mono">{{ c.att.attended }}</td>
+        <td>{{ m.meter(c.att.percent, c.att.held) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+<div class="panel p-0">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0">Every record</h2>
+  </div>
+  {% if records %}
+  <div class="table-responsive" style="max-height:26rem;overflow-y:auto">
+    <table class="list-table">
+      <thead><tr><th>Date</th><th>Day</th><th>Course</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for r in records %}
+      <tr>
+        <td class="nowrap">{{ r.date.strftime('%d %b %Y') }}</td>
+        <td class="sub">{{ r.date.strftime('%a') }}</td>
+        <td>{{ r.course.course_code if r.course else '—' }}</td>
+        <td>{{ m.pill_att(r.status) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty-line">No attendance recorded in this period.</p>{% endif %}
+</div>
+
+{% elif tab == 'marks' %}
+<div class="panel p-0">
+  {% if results %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Work</th><th>Course</th><th>Type</th><th>Date</th>
+                 <th>Score</th><th>Feedback</th></tr></thead>
+      <tbody>
+      {% for r in results %}
+      <tr>
+        <td class="clip" title="{{ r.assessment.title }}">{{ r.assessment.title }}</td>
+        <td>{{ r.assessment.course.course_code if r.assessment.course else '—' }}</td>
+        <td class="sub">{{ r.assessment.kind }}</td>
+        <td class="sub nowrap">
+          {{ r.assessment.assigned_date.strftime('%d %b %Y') if r.assessment.assigned_date else '—' }}</td>
+        <td class="mono">
+          {% if r.score is not none %}{{ r.score|round(1) }}/{{ r.assessment.max_score|round(0)|int }}
+          {% else %}<span class="sub">not marked</span>{% endif %}</td>
+        <td class="sub clip" title="{{ r.feedback or '' }}">{{ r.feedback or '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty-line">No marks recorded.</p>{% endif %}
+</div>
+
+{% elif tab == 'assignments' %}
+<div class="panel p-0">
+  {% if submissions %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Assignment</th><th>Course</th><th>Due</th>
+                 <th>Handed in</th><th>Status</th><th>Score</th></tr></thead>
+      <tbody>
+      {% for r in submissions %}
+      <tr>
+        <td class="clip" title="{{ r.assessment.title }}">{{ r.assessment.title }}</td>
+        <td>{{ r.assessment.course.course_code if r.assessment.course else '—' }}</td>
+        <td class="sub nowrap">
+          {{ r.assessment.due_date.strftime('%d %b') if r.assessment.due_date else '—' }}</td>
+        <td class="sub nowrap">
+          {{ r.submitted_at.strftime('%d %b %H:%M') if r.submitted_at else '—' }}</td>
+        <td>
+          {% if r.state == 'Marked' %}<span class="pill pill-green">Marked</span>
+          {% elif r.state == 'Received' %}<span class="pill pill-blue">Received</span>
+          {% elif r.state == 'Submitted' %}<span class="pill pill-amber">Submitted</span>
+          {% else %}<span class="pill pill-gray">Not in</span>{% endif %}
+        </td>
+        <td class="mono">
+          {% if r.score is not none %}{{ r.score|round(1) }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="padding:.7rem 1.15rem 0">
+    Files are not downloadable from this account.</p>
+  {% else %}<p class="empty-line">No assignments on record.</p>{% endif %}
+</div>
+
+{% elif tab == 'routine' %}
+<div class="panel" style="margin-bottom:1.1rem">
+  <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end">
+    <input type="hidden" name="tab" value="routine">
+    <div><label class="form-label">From</label>
+      <input type="date" class="form-control" name="from" value="{{ r_start.isoformat() }}"></div>
+    <div><label class="form-label">To</label>
+      <input type="date" class="form-control" name="to" value="{{ r_end.isoformat() }}"></div>
+    <button class="btn btn-primary">Show</button>
+  </form>
+</div>
+<div class="panel p-0">
+  {% if routine %}
+  <div class="table-responsive" style="max-height:30rem;overflow-y:auto">
+    <table class="list-table">
+      <thead><tr><th>Date</th><th>Day</th><th>Time</th><th>Class</th>
+                 <th>Teacher</th><th>Room</th></tr></thead>
+      <tbody>
+      {% for c in routine %}
+      <tr>
+        <td class="nowrap">{{ c.date.strftime('%d %b %Y') }}</td>
+        <td class="sub">{{ c.date.strftime('%A') }}</td>
+        <td class="nowrap mono">{{ c.start_str }} - {{ c.end_str }}</td>
+        <td class="clip" title="{{ c.task }}">{{ c.task or '—' }}</td>
+        <td class="sub">{{ c.teacher.full_name if c.teacher else '—' }}</td>
+        <td>{{ c.room_label }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="empty-line">No classes in this period.</p>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

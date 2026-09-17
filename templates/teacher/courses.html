@@ -1,70 +1,62 @@
 {% extends "base.html" %}
-{% import "partials/macros.html" as m %}
-{% block title %}My courses · {{ org_name }}{% endblock %}
-
+{% block title %}My Courses · PIE Scheduler{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1 class="page-title">My courses</h1>
-    <p class="page-sub">{{ current_user.full_name }} · figures cover {{ window_label|lower }}.</p>
+    <p class="page-sub">{{ courses|length }} course(s) assigned to you</p>
   </div>
-  {{ m.term_filter(terms, window_label) }}
 </div>
 
 {% if notices %}
-<div class="panel panel-flag mb-4">
-  <h2 class="panel-title">From the office <span class="count-pill">{{ notices|length }}</span></h2>
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">Notices</h2>
+  </div>
   <ul class="notice-list">
-  {% for n in notices %}
-    <li class="notice {% if n.is_urgent %}is-urgent{% endif %}">
+    {% for n in notices[:5] %}
+    <li class="notice {{ 'is-urgent' if n.is_urgent }}">
       <div class="notice-meta">
-        <span class="notice-scope">{{ n.scope }}</span>
         {% if n.is_urgent %}<span class="notice-tag urgent">Urgent</span>{% endif %}
-        <span class="ms-auto mono">{{ n.created_at.strftime('%d %b') }}</span>
+        <span>{{ n.scope }}</span>
+        <span>&middot; {{ n.created_at.strftime('%d %b %Y') }}</span>
       </div>
-      <h3 class="notice-title">{{ n.title }}</h3>
-      {% if n.body %}<p class="notice-body">{{ n.body }}</p>{% endif %}
+      <div class="notice-title">{{ n.title }}</div>
+      {% if n.body %}<div class="notice-body">{{ n.body }}</div>{% endif %}
     </li>
-  {% endfor %}
+    {% endfor %}
   </ul>
 </div>
 {% endif %}
 
-{% if off_days %}
-<div class="alert alert-warning">
-  Blocked days ahead:
-  {% for o in off_days %}<strong>{{ o.off_date.strftime('%d %b') }}</strong>{% if o.reason %} ({{ o.reason }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}.
-  You can't take a register or log a lesson on those dates.
-</div>
-{% endif %}
-
-{% if cards %}
-<div class="row g-3">
-  {% for c in cards %}
-  <div class="col-md-6 col-xl-4">
-    <a class="course-card" href="{{ url_for('teacher.course', course_id=c.course.id) }}">
-      <span class="cc-code">{{ c.course.course_code }}</span>
-      <h2 class="cc-name">{{ c.course.course_name }}</h2>
-      <div class="cc-stats">
-        <span><strong>{{ c.students }}</strong> students</span>
-        <span><strong>{{ c.sessions }}</strong> sessions</span>
-        <span class="{% if c.attendance < 75 %}text-warn{% endif %}"><strong>{{ c.attendance }}%</strong> attendance</span>
-      </div>
-      {% if c.pending %}
-        <span class="cc-flag">{{ c.pending }} piece(s) of work to mark</span>
-      {% endif %}
-      <span class="cc-last">
-        {% if c.last %}Last class {{ c.last.class_date.strftime('%d %b') }} — {{ c.last.topic_taught|truncate(48) }}
-        {% else %}No class logged yet{% endif %}
-      </span>
-    </a>
+{% if courses %}
+<div class="form-row cols-3" style="gap:1rem">
+  {% for c in courses %}
+  <div class="panel">
+    <div style="margin-bottom:.6rem">
+      <span class="pill pill-navy">{{ c.course_code }}</span>
+      {% if c.branch %}<span class="sub" style="margin-left:.4rem">{{ c.branch }}</span>{% endif %}
+    </div>
+    <h3 style="font-size:1rem;font-weight:700;margin:0 0 .3rem">{{ c.course_name }}</h3>
+    <p class="sub" style="margin:0 0 .9rem">
+      {{ c.assignments|length }} student(s)
+      {% if c.lessons %} &middot; {{ c.lessons|length }} lesson(s) logged{% endif %}
+    </p>
+    <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+      <a class="btn btn-sm btn-primary"
+         href="{{ url_for('teacher.course', cid=c.id, tab='register') }}">Take register</a>
+      <a class="btn btn-sm btn-outline"
+         href="{{ url_for('teacher.course', cid=c.id, tab='lessons') }}">Log lesson</a>
+    </div>
   </div>
   {% endfor %}
 </div>
 {% else %}
-<div class="empty-state">
-  <h2 class="h5">No classes yet</h2>
-  <p class="text-muted mb-0">The office hasn't allocated any courses to you.</p>
+<div class="panel">
+  <p class="empty-line" style="padding:1rem 0">
+    You have no courses yet. An administrator needs to enrol students into a course
+    and assign you as the teacher.
+  </p>
 </div>
 {% endif %}
 {% endblock %}

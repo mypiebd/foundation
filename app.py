@@ -1,240 +1,224 @@
-"""PIE Pathways — application setup, authentication and first-run seeding."""
-
+"""PIE Scheduler — application factory, authentication, seed."""
 import os
-from datetime import date, datetime, timedelta
+from datetime import date
 
-from flask import (Flask, abort, flash, redirect, render_template, request,
-                   send_from_directory, url_for)
-from flask_login import (LoginManager, current_user, login_required, login_user,
-                         logout_user)
+from flask import (Flask, abort, flash, redirect, render_template,
+                   request, send_from_directory, url_for)
+from flask_login import (LoginManager, current_user, login_required,
+                         login_user, logout_user)
 
-from helpers import human_size, storage_usage
-from models import (Batch, BRANCHES, ClassAssignment, Course, CourseMaterial,
-                    LessonLog, Term, User, db)
+from helpers import human_size, page_args, read_only_guard, storage_usage
+from models import (BRANCHES, COURSES_LIST, CourseMaterial, Term, User, db)
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+BASE_DIR   = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "static", "uploads")
 
-app = Flask(__name__)
-app.config.update(
-    SECRET_KEY=os.environ.get("LMS_SECRET_KEY", "943mr845hdf830dhjf84jsdhe84hd84h"),
-    SQLALCHEMY_DATABASE_URI="sqlite:///" + os.path.join(BASE_DIR, "lms.db"),
-    SQLALCHEMY_TRACK_MODIFICATIONS=False,
-    MAX_CONTENT_LENGTH=5 * 1024 * 1024,          # 5 MB per uploaded file
-    UPLOAD_FOLDER=UPLOAD_DIR,
-    STORAGE_BUDGET=8 * 1024 * 1024 * 1024,       # 8 GB
-    STORAGE_HARD_LIMIT=10 * 1024 * 1024 * 1024,  # 10 GB    # uploads refused above this
-    ORG_NAME="PIE Pathways",
-)
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-db.init_app(app)
-login_manager = LoginManager(app)
-login_manager.login_view = "login"
-login_manager.login_message = "Sign in to continue."
-login_manager.login_message_category = "warning"
+def create_app():
+    app = Flask(__name__)
+    app.config.update(
+        SECRET_KEY=os.environ.get("PIE_SECRET_KEY", "pie-scheduler-change-this-2026"),
+        SQLALCHEMY_DATABASE_URI="sqlite:///" + os.path.join(BASE_DIR, "pie.db"),
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        MAX_CONTENT_LENGTH=20 * 1024 * 1024,
+        UPLOAD_FOLDER=UPLOAD_DIR,
+        STORAGE_BUDGET=250 * 1024 * 1024,
+        STORAGE_HARD_LIMIT=350 * 1024 * 1024,
+        ORG_NAME="PIE Scheduler",
+    )
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+    db.init_app(app)
 
-@login_manager.user_loader
-def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    login_manager = LoginManager(app)
+    login_manager.login_view = "login"
+    login_manager.login_message = "Please sign in to continue."
+    login_manager.login_message_category = "warning"
 
+    @login_manager.user_loader
+    def load_user(user_id):
+        return db.session.get(User, int(user_id))
 
-def page_args():
-    """Current query string minus the page number, for pagination links."""
-    args = request.args.to_dict()
-    args.pop("page", None)
-    return args
+    # ── context processor ────────────────────────────────────────────────────
+    import json as _json
 
+    @app.template_filter("from_json")
+    def _from_json(v):
+        try:
+            return _json.loads(v or "[]")
+        except ValueError:
+            return []
 
-@app.context_processor
-def inject_globals():
-    return {
-        "page_args": page_args,
-        "today_str": date.today().isoformat(),
-        "today": date.today(),
-        "BRANCHES": BRANCHES,
-        "human_size": human_size,
-        "org_name": app.config["ORG_NAME"],
-    }
+    @app.context_processor
+    def inject_globals():
+        return {
+            "page_args": page_args,
+            "today": date.today(),
+            "today_str": date.today().isoformat(),
+            "BRANCHES": BRANCHES,
+            "COURSES_LIST": COURSES_LIST,
+            "human_size": human_size,
+            "org_name": app.config["ORG_NAME"],
+        }
 
-
-# ------------------------------------------------------------- auth --------
-
-@app.route("/")
-def home():
-    if current_user.is_authenticated:
-        return redirect(url_for("dashboard"))
-    return redirect(url_for("login"))
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for("dashboard"))
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        user = User.query.filter_by(username=username).first()
-        if user and user.check_password(request.form.get("password", "")):
-            if user.is_archived:
-                flash("This account has been archived. Contact the office.", "danger")
-                return redirect(url_for("login"))
-            login_user(user)
+    # ── auth routes ──────────────────────────────────────────────────────────
+    @app.route("/")
+    def home():
+        if current_user.is_authenticated:
             return redirect(url_for("dashboard"))
-        flash("That username and password don't match.", "danger")
-    return render_template("login.html")
+        return redirect(url_for("login"))
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        if current_user.is_authenticated:
+            return redirect(url_for("dashboard"))
+        if request.method == "POST":
+            username = request.form.get("username", "").strip()
+            user = User.query.filter_by(username=username).first()
+            if user and user.check_password(request.form.get("password", "")):
+                if not user.is_active:
+                    flash("This account is archived. Contact admin.", "danger")
+                    return redirect(url_for("login"))
+                login_user(user)
+                return redirect(url_for("dashboard"))
+            flash("Wrong username or password.", "danger")
+        return render_template("login.html")
+
+    @app.route("/logout")
+    @login_required
+    def logout():
+        logout_user()
+        flash("You have been signed out.", "success")
+        return redirect(url_for("login"))
+
+    @app.route("/dashboard")
+    @login_required
+    def dashboard():
+        if current_user.is_admin:
+            return redirect(url_for("admin.overview"))
+        if current_user.is_teacher:
+            return redirect(url_for("teacher.my_schedule"))
+        if current_user.is_viewer:
+            return redirect(url_for("viewer.search"))
+        return redirect(url_for("student.dashboard"))
+
+    @app.route("/change-password", methods=["POST"])
+    @login_required
+    def change_password():
+        current_pw = request.form.get("current_password", "")
+        new_pw     = request.form.get("new_password", "")
+        confirm    = request.form.get("confirm_password", "")
+        if not current_user.check_password(current_pw):
+            flash("Current password is wrong.", "danger")
+        elif len(new_pw) < 6:
+            flash("New password must be at least 6 characters.", "danger")
+        elif new_pw != confirm:
+            flash("New passwords do not match.", "danger")
+        else:
+            current_user.set_password(new_pw)
+            current_user.initial_password = None
+            db.session.commit()
+            flash("Password changed successfully.", "success")
+        return redirect(request.referrer or url_for("dashboard"))
+
+    @app.route("/materials/<int:mid>/open")
+    @login_required
+    def open_material(mid):
+        item = db.session.get(CourseMaterial, mid)
+        if not item:
+            abort(404)
+        if item.is_link:
+            from flask import redirect as redir
+            return redir(item.file_path_or_link)
+        return send_from_directory(app.config["UPLOAD_FOLDER"],
+                                   item.file_path_or_link, as_attachment=True)
+
+    # ── error handlers ───────────────────────────────────────────────────────
+    @app.errorhandler(401)
+    def unauth(_):
+        return redirect(url_for("login"))
+
+    @app.errorhandler(403)
+    def forbidden(_):
+        return render_template("error.html", code="403",
+                               message="You don't have permission to view that page."), 403
+
+    @app.errorhandler(404)
+    def not_found(_):
+        return render_template("error.html", code="404",
+                               message="Nothing lives at that address."), 404
+
+    @app.errorhandler(413)
+    def too_large(_):
+        flash("That file exceeds the 5 MB limit. Share it as a link instead.", "danger")
+        return redirect(request.referrer or url_for("dashboard"))
+
+    # ── blueprints ───────────────────────────────────────────────────────────
+    from views_admin   import bp as admin_bp
+    from views_teacher import bp as teacher_bp
+    from views_student import bp as student_bp
+    from views_viewer import bp as viewer_bp
+
+    app.before_request(read_only_guard)
+
+    app.register_blueprint(admin_bp)
+    app.register_blueprint(teacher_bp)
+    app.register_blueprint(student_bp)
+    app.register_blueprint(viewer_bp)
+
+    # ── seed ─────────────────────────────────────────────────────────────────
+    with app.app_context():
+        db.create_all()
+        _seed()
+        _seed_viewer()
+
+    return app
 
 
-@app.route("/logout")
-@login_required
-def logout():
-    logout_user()
-    flash("You're signed out.", "success")
-    return redirect(url_for("login"))
+def _seed_viewer():
+    """
+    The fixed front-desk account. Created once; never duplicated, and never
+    overwritten if the password has since been changed.
+    """
+    if User.query.filter_by(username="studentviewer").first():
+        return
+    v = User(
+        username="studentviewer",
+        full_name="Student Records Viewer",
+        role="STUDENT_VIEWER",
+        initial_password="pie@viewer2026",
+    )
+    v.set_password("pie@viewer2026")
+    db.session.add(v)
+    db.session.commit()
 
 
-@app.route("/dashboard")
-@login_required
-def dashboard():
-    if current_user.is_admin:
-        return redirect(url_for("admin.overview"))
-    if current_user.is_teacher:
-        return redirect(url_for("teacher.my_courses"))
-    return redirect(url_for("student.dashboard"))
-
-
-@app.route("/change-password", methods=["POST"])
-@login_required
-def change_password():
-    current = request.form.get("current_password", "")
-    new = request.form.get("new_password", "")
-    confirm = request.form.get("confirm_password", "")
-    if not current_user.check_password(current):
-        flash("Your current password is wrong.", "danger")
-    elif len(new) < 6:
-        flash("Use at least 6 characters for the new password.", "danger")
-    elif new != confirm:
-        flash("The two new passwords don't match.", "danger")
-    else:
-        current_user.set_password(new)
-        current_user.initial_password = None
-        db.session.commit()
-        flash("Password changed.", "success")
-    return redirect(request.referrer or url_for("dashboard"))
-
-
-@app.route("/materials/<int:material_id>/open")
-@login_required
-def open_material(material_id):
-    item = db.session.get(CourseMaterial, material_id)
-    if not item:
-        abort(404)
-    if current_user.is_student:
-        enrolled = ClassAssignment.query.filter_by(
-            course_id=item.course_id, student_id=current_user.id).first()
-        if not enrolled:
-            abort(403)
-    elif current_user.is_teacher:
-        mine = {a.course_id for a in current_user.teaching_assignments}
-        if item.course_id not in mine:
-            abort(403)
-    if item.is_link:
-        return redirect(item.file_path_or_link)
-    return send_from_directory(app.config["UPLOAD_FOLDER"],
-                               item.file_path_or_link, as_attachment=True)
-
-
-# ----------------------------------------------------------- errors --------
-
-@app.errorhandler(401)
-def unauthorised(_):
-    return redirect(url_for("login"))
-
-
-@app.errorhandler(403)
-def forbidden(_):
-    return render_template("error.html", code="403",
-                           message="That page belongs to a different role."), 403
-
-
-@app.errorhandler(404)
-def not_found(_):
-    return render_template("error.html", code="404",
-                           message="Nothing lives at that address."), 404
-
-
-@app.errorhandler(413)
-def too_large(_):
-    flash("That file is over the 5 MB limit. Share it as a link instead.", "danger")
-    return redirect(request.referrer or url_for("dashboard"))
-
-
-# ------------------------------------------------------------- seed --------
-
-def seed():
-    db.create_all()
+def _seed():
+    """Create admin account if database is empty."""
     if User.query.first():
         return
-
-    admin = User(username="admin", full_name="System Administrator",
-                 role="ADMIN", initial_password="admin123")
-    admin.set_password("admin123")
+    admin = User(
+        username="admin",
+        full_name="System Administrator",
+        role="ADMIN",
+        initial_password="pie@admin2026",
+    )
+    admin.set_password("pie@admin2026")
     db.session.add(admin)
 
+    # Create a default current term
     today = date.today()
-    term = Term(name=f"Term 1 {today.year}", start_date=today.replace(month=1, day=1),
-                end_date=today.replace(month=12, day=31), is_current=True)
-    batch = Batch(name=f"IFY {today.strftime('%B %Y')}", branch="Banani",
-                  start_date=today, end_date=today + timedelta(days=270))
-    db.session.add_all([term, batch])
-    db.session.commit()
-
-    teacher = User(username="teacher1", full_name="Rezaul Karim", role="TEACHER",
-                   branch="Banani", phone="+8801700000000", initial_password="teacher123")
-    teacher.set_password("teacher123")
-    s1 = User(username="1001", full_name="Ayesha Rahman", role="STUDENT",
-              branch="Banani", phone="+8801711111111", batch_id=batch.id,
-              initial_password="student123")
-    s1.set_password("student123")
-    s2 = User(username="1002", full_name="Tanvir Ahmed", role="STUDENT",
-              branch="Banani", phone="+8801722222222", batch_id=batch.id,
-              initial_password="student123")
-    s2.set_password("student123")
-    db.session.add_all([teacher, s1, s2])
-    db.session.commit()
-
-    c1 = Course(course_code="EAP101", course_name="English for Academic Purposes",
-                description="Reading, writing, listening and speaking for university study.",
-                branch="Banani")
-    c2 = Course(course_code="MTH101", course_name="Mathematics and Data Handling",
-                description="Algebra, functions, statistics and data interpretation.",
-                branch="Banani")
-    db.session.add_all([c1, c2])
-    db.session.commit()
-
-    for course in (c1, c2):
-        for student in (s1, s2):
-            db.session.add(ClassAssignment(course_id=course.id, teacher_id=teacher.id,
-                                           student_id=student.id))
-    db.session.add(LessonLog(course_id=c1.id, teacher_id=teacher.id, class_date=today,
-                             topic_taught="Class 1 — Academic paragraph structure",
-                             summary_notes="Topic sentence, supporting detail, conclusion. "
-                                           "Homework: draft one paragraph."))
+    term = Term(
+        name=f"Term 1 {today.year}",
+        start_date=today.replace(month=1, day=1),
+        end_date=today.replace(month=12, day=31),
+        is_current=True,
+    )
+    db.session.add(term)
     db.session.commit()
 
 
-# Blueprints are imported here, after app and db exist, to avoid a circular import.
-from views_admin import bp as admin_bp        # noqa: E402
-from views_student import bp as student_bp    # noqa: E402
-from views_teacher import bp as teacher_bp    # noqa: E402
-
-app.register_blueprint(admin_bp)
-app.register_blueprint(teacher_bp)
-app.register_blueprint(student_bp)
-
-with app.app_context():
-    seed()
-
+app = create_app()
 
 if __name__ == "__main__":
     app.run(debug=True)

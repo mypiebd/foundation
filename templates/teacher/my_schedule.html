@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}My schedule · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">My schedule</h1>
+    <p class="page-sub">
+      {% if view == 'day' %}{{ start.strftime('%A %d %B %Y') }}
+      {% elif view == 'month' %}{{ start.strftime('%B %Y') }}
+      {% else %}{{ start.strftime('%d %b') }} &ndash; {{ end.strftime('%d %b %Y') }}{% endif %}
+    </p>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-primary"
+       href="{{ url_for('teacher.my_schedule_pdf', start=start.isoformat(),
+                        end=end.isoformat(), teacher_id=filter_tid or '') }}">
+      Download PDF</a>
+  </div>
+</div>
+
+{# ── Reminders ── #}
+{% if todo %}
+<div class="panel p-0" style="margin-bottom:1.1rem;border-left:3px solid var(--red)">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0;color:var(--red)">
+      Still to write up <span class="count-pill">{{ todo|length }}</span></h2>
+    <span class="sub">Attendance or lesson notes missing</span>
+  </div>
+  <div style="max-height:18rem;overflow-y:auto">
+    {% for t in todo %}
+    <div class="sched-row">
+      <div class="sched-time">{{ t.cls.date.strftime('%d %b') }}
+        <span class="sched-end">{{ t.cls.start_str }}</span></div>
+      <div class="sched-task">
+        <div class="fw-600">{{ t.cls.task or 'Class' }}</div>
+        <div class="sub" style="color:var(--red)">
+          finished {{ t.hours_ago }} hours ago &middot;
+          {% if t.no_attendance %}no attendance{% endif %}
+          {% if t.no_attendance and t.no_log %} and {% endif %}
+          {% if t.no_log %}no lesson notes{% endif %}
+        </div>
+      </div>
+      <div class="sched-badges">
+        <a class="btn btn-xs btn-primary"
+           href="{{ url_for('teacher.class_record', cid=t.cls.id) }}">Write it up</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ── Controls ── #}
+<div class="panel" style="margin-bottom:1.1rem;padding:.7rem .95rem">
+  <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <div class="seg">
+      {% for v,l in [('day','Day'),('week','Week'),('month','Month')] %}
+      <a class="seg-btn {{ 'on' if view == v }}"
+         href="{{ url_for('teacher.my_schedule', view=v, date=anchor.isoformat(),
+                          teacher_id=filter_tid or '') }}">{{ l }}</a>
+      {% endfor %}
+    </div>
+    <a class="btn btn-outline btn-sm"
+       href="{{ url_for('teacher.my_schedule', view=view, date=prev_d.isoformat(),
+                        teacher_id=filter_tid or '') }}">&larr;</a>
+    <a class="btn btn-outline btn-sm"
+       href="{{ url_for('teacher.my_schedule', view=view,
+                        teacher_id=filter_tid or '') }}">Today</a>
+    <a class="btn btn-outline btn-sm"
+       href="{{ url_for('teacher.my_schedule', view=view, date=next_d.isoformat(),
+                        teacher_id=filter_tid or '') }}">&rarr;</a>
+    {% if all_teachers %}
+    <select class="form-select" name="teacher_id" style="max-width:190px"
+            onchange="this.form.submit()">
+      {% for t in all_teachers %}
+        <option value="{{ t.id }}" {{ 'selected' if filter_tid == t.id }}>{{ t.full_name }}</option>
+      {% endfor %}
+    </select>
+    <input type="hidden" name="view" value="{{ view }}">
+    {% endif %}
+    <span class="sub" style="margin-left:auto">
+      {{ stats.classes }} class(es) &middot; {{ stats.hours }}h
+      {% if stats.batch %} &middot; {{ stats.batch }} batch{% endif %}
+      {% if stats.one %} &middot; {{ stats.one }} one-to-one{% endif %}
+    </span>
+  </form>
+</div>
+
+{# ══════════ DAY ══════════ #}
+{% if view == 'day' and timeline %}
+  {% if timeline.warnings %}
+  <div class="alert alert-warning">
+    <div>{% for w in timeline.warnings %}{{ w }}<br>{% endfor %}</div>
+  </div>
+  {% endif %}
+  <div class="panel p-0">
+    {% if timeline.working %}
+    <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+      <h2 class="panel-title" style="margin:0">{{ anchor.strftime('%A %d %B') }}</h2>
+      <span class="sub">{{ timeline.classes }} class(es) &middot;
+        {{ timeline.hours }}h teaching &middot;
+        {{ timeline.window[0].strftime('%I:%M %p').lstrip('0') }}–{{ timeline.window[1].strftime('%I:%M %p').lstrip('0') }}</span>
+    </div>
+    <div style="padding:.6rem 1.15rem 1rem">
+      {% for it in timeline['items'] %}
+        {% if it.type == 'class' %}
+        <div class="tl-row tl-class {{ 'tl-1on1' if it.obj.class_type == '1-on-1' else 'tl-batch' }}
+                    {{ 'tl-off' if it.obj.status == 'Cancelled' }}">
+          <div class="tl-time">{{ it.start.strftime('%I:%M %p').lstrip('0') }}
+            <span class="sub">{{ it.end.strftime('%I:%M %p').lstrip('0') }}</span></div>
+          <div class="tl-body">
+            <div class="fw-600">{{ it.obj.task or 'Class' }}</div>
+            <div class="sub">{{ it.obj.class_type }}
+              {% if it.obj.course %} &middot; {{ it.obj.course.course_code }}{% endif %}
+              &middot; {{ it.obj.venue }}</div>
+          </div>
+          <div class="tl-end">
+            {{ m.pill_sched(it.obj.status) }}
+            <a class="btn btn-xs btn-primary"
+               href="{{ url_for('teacher.class_record', cid=it.obj.id) }}">
+              {{ 'Edit' if it.obj.status != 'Scheduled' else 'Write up' }}</a>
+          </div>
+        </div>
+        {% elif it.type == 'block' %}
+        <div class="tl-row tl-block">
+          <div class="tl-time">{{ it.start.strftime('%I:%M %p').lstrip('0') }}
+            <span class="sub">{{ it.end.strftime('%I:%M %p').lstrip('0') }}</span></div>
+          <div class="tl-body"><div class="fw-600">{{ it.obj.label }}</div></div>
+          <div class="tl-end"><span class="pill pill-amber">Kept clear</span></div>
+        </div>
+        {% else %}
+        <div class="tl-row tl-free">
+          <div class="tl-time">{{ it.start.strftime('%I:%M %p').lstrip('0') }}
+            <span class="sub">{{ it.end.strftime('%I:%M %p').lstrip('0') }}</span></div>
+          <div class="tl-body"><span class="sub">Free —
+            {{ (it.mins // 60) }}h {{ it.mins % 60 }}m</span></div>
+          <div class="tl-end"></div>
+        </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-line">Not a working day for you.</p>
+    {% endif %}
+  </div>
+
+{# ══════════ MONTH ══════════ #}
+{% elif view == 'month' %}
+<div class="panel p-0">
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Date</th><th>Day</th><th>Classes</th></tr></thead>
+      <tbody>
+      {% for day, items in days.items() %}
+        {% set live = items | rejectattr('status','equalto','Cancelled') | list %}
+        {% if live %}
+        <tr>
+          <td class="nowrap {{ 'fw-700' if day == today }}">{{ day.strftime('%d %b') }}</td>
+          <td class="sub">{{ day.strftime('%A') }}</td>
+          <td><div style="display:flex;gap:.35rem;flex-wrap:wrap">
+            {% for c in live %}
+            <a class="chip {{ 'chip-1on1' if c.class_type == '1-on-1' else 'chip-batch' }}"
+               href="{{ url_for('teacher.class_record', cid=c.id) }}">
+              {{ c.start_str }} {{ c.task|truncate(24) }}</a>
+            {% endfor %}
+          </div></td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if stats.classes == 0 %}<p class="empty-line">Nothing this month.</p>{% endif %}
+</div>
+
+{# ══════════ WEEK ══════════ #}
+{% else %}
+  {% if todays %}
+  <div class="panel p-0" style="margin-bottom:1.1rem">
+    <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+      <h2 class="panel-title" style="margin:0">Today — {{ today.strftime('%A %d %B') }}</h2>
+    </div>
+    {% for c in todays %}
+    <div class="sched-row">
+      <div class="sched-time">{{ c.start_str }}
+        <span class="sched-end">to {{ c.end_str }}</span></div>
+      <div class="sched-task">
+        <div class="fw-600">{{ c.task or 'Class' }}</div>
+        <div class="sub">{{ c.class_type }}
+          {% if c.course %} &middot; {{ c.course.course_code }}{% endif %}
+          &middot; {{ c.venue }}</div>
+      </div>
+      <div class="sched-badges">
+        {{ m.pill_sched(c.status) }}
+        <a class="btn btn-xs btn-primary"
+           href="{{ url_for('teacher.class_record', cid=c.id) }}">
+          {{ 'Edit' if c.status != 'Scheduled' else 'Write up' }}</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="cal-grid">
+    {% for day, items in days.items() %}
+    <div class="cal-col">
+      <div class="cal-day-head {{ 'is-today' if day == today }}">
+        {{ day.strftime('%a') }} {{ day.strftime('%d') }}
+        {% set live = items | rejectattr('status','equalto','Cancelled') | list %}
+        {% if live %}<span style="float:right;font-weight:400">{{ live|length }}</span>{% endif %}
+      </div>
+      <div class="cal-day-body">
+        {% for c in items %}
+        <a class="cal-event
+            {% if c.class_type == '1-on-1' %}cal-1on1
+            {% elif c.class_type == 'Batch' %}cal-batch{% else %}cal-other{% endif %}
+            {{ 'cal-done' if c.status in ('Completed','Cancelled') }}"
+           href="{{ url_for('teacher.class_record', cid=c.id) }}"
+           title="{{ c.task }} ({{ c.status }})">
+          <span class="ev-time">{{ c.start_str }}</span>
+          <span class="ev-task">{{ c.task or '—' }}</span>
+        </a>
+        {% else %}
+        <p class="sub" style="margin:.35rem;text-align:center">Free</p>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<style>
+.seg{display:inline-flex;border:1.5px solid var(--line);border-radius:.3rem;overflow:hidden}
+.seg-btn{padding:.3rem .8rem;font-size:.84rem;color:var(--ink);text-decoration:none;
+  background:#fff;border-right:1px solid var(--line)}
+.seg-btn:last-child{border-right:0}
+.seg-btn:hover{background:var(--surface);text-decoration:none}
+.seg-btn.on{background:var(--red);color:#fff}
+.tl-row{display:grid;grid-template-columns:104px 1fr auto;gap:.8rem;align-items:center;
+  padding:.5rem .7rem;border-radius:.25rem;margin-bottom:.3rem;border-left:3px solid transparent}
+.tl-time{font-weight:700;font-size:.86rem;line-height:1.25}
+.tl-time .sub{display:block;font-weight:400}
+.tl-end{display:flex;gap:.35rem;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.tl-1on1{background:#eff6ff;border-left-color:#3b82f6}
+.tl-batch{background:#f0fdf4;border-left-color:#22c55e}
+.tl-block{background:#fffbeb;border-left-color:#f59e0b}
+.tl-free{background:var(--surface);border-left-color:var(--line)}
+.tl-off{opacity:.55}
+.chip{display:inline-block;padding:.12rem .5rem;border-radius:99px;font-size:.74rem;
+  text-decoration:none;border:1px solid transparent}
+.chip-1on1{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+.chip-batch{background:#f0fdf4;color:#15803d;border-color:#bbf7d0}
+@media(max-width:700px){.tl-row{grid-template-columns:88px 1fr}.tl-end{grid-column:1/-1;justify-content:flex-start}}
+</style>
+{% endblock %}

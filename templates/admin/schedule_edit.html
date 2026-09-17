@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}Change a class · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('admin.calendar', view='day',
+       date=cls.date.isoformat()) }}">&larr; Back to that day</a></p>
+    <h1 class="page-title">Change one class</h1>
+    <p class="page-sub">
+      {{ cls.task or 'Class' }} &middot;
+      {{ cls.date.strftime('%A %d %b %Y') }} &middot;
+      {{ cls.start_str }} &middot; {{ m.pill_sched(cls.status) }}
+      {% if cls.group %} &middot; part of
+        <a href="{{ url_for('admin.class_detail', gid=cls.group_id) }}">{{ cls.group.name }}</a>
+      {% endif %}
+    </p>
+  </div>
+</div>
+
+{% if verdict %}
+<div class="alert alert-{{ 'warning' if verdict.status == 'break' else 'danger' }}">
+  <div>
+    <strong>{{ 'Needs a break first' if verdict.status == 'break' else 'That time is taken' }}</strong>
+    — {{ verdict.message }}
+    {% if options %}
+    <div style="margin-top:.6rem">
+      These would work:
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.35rem">
+        {% for o in options %}
+        <button type="button" class="opt-btn use-opt"
+                data-from="{{ o.start.strftime('%H:%M') }}"
+                data-to="{{ o.end.strftime('%H:%M') }}">
+          {{ o.start.strftime('%I:%M %p').lstrip('0') }}
+          <span style="opacity:.65">({{ o.label }})</span>
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div style="max-width:640px">
+<form method="post" class="warn-unsaved">
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">When</h3>
+    <div class="form-row cols-3">
+      <div><label class="form-label">Date</label>
+        <input type="date" class="form-control" name="date"
+               value="{{ cls.date.isoformat() }}" required></div>
+      <div><label class="form-label">Starts</label>
+        <input type="time" class="form-control" name="start_time" id="sFrom"
+               value="{{ cls.start_time.strftime('%H:%M') }}" required></div>
+      <div><label class="form-label">Finishes</label>
+        <input type="time" class="form-control" name="end_time" id="sTo"
+               value="{{ cls.end_time.strftime('%H:%M') }}" required></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">Who and where</h3>
+    <div class="form-row cols-2" style="margin-bottom:1rem">
+      <div><label class="form-label">Teacher</label>
+        <select class="form-select" name="teacher_id">
+          {% for t in teachers_all %}
+            <option value="{{ t.id }}" {{ 'selected' if cls.teacher_id == t.id }}>
+              {{ t.full_name }}</option>
+          {% endfor %}
+        </select></div>
+      <div><label class="form-label">Where</label>
+        <select class="form-select" name="venue">
+          {% for v in ['Centre','Online','Zoom'] %}
+            <option {{ 'selected' if cls.venue == v }}>{{ v }}</option>{% endfor %}
+        </select></div>
+    </div>
+    <div><label class="form-label">Name</label>
+      <input class="form-control" name="task" value="{{ cls.task or '' }}"></div>
+    {% if cls.student %}
+    <p class="form-hint" style="margin-top:.6rem">
+      Student: <strong>{{ cls.student.full_name }}</strong> — to change who
+      attends, edit the class itself rather than this one session.
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">Status and notes</h3>
+    <div style="max-width:250px;margin-bottom:.9rem">
+      <label class="form-label">Status</label>
+      <select class="form-select" name="status">
+        {% for s in ['Scheduled','Completed','Cancelled','Student Absent','Teacher Absent'] %}
+          <option {{ 'selected' if cls.status == s }}>{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    <div><label class="form-label">Note</label>
+      <textarea class="form-control" name="notes" rows="2"
+        placeholder="Why it moved, who asked…">{{ cls.notes or '' }}</textarea></div>
+  </div>
+
+  {% if verdict %}
+  <div class="panel" style="margin-bottom:1.1rem;border-left:3px solid var(--warn)">
+    <label style="display:flex;align-items:center;gap:.4rem;font-size:.87rem;font-weight:600">
+      <input type="checkbox" name="force" value="1"> Save it anyway
+    </label>
+    <div class="form-hint">Only if the overlap is deliberate.</div>
+  </div>
+  {% endif %}
+
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+    <button class="btn btn-primary">Save</button>
+    <a class="btn btn-link" href="{{ url_for('admin.calendar', view='day',
+       date=cls.date.isoformat()) }}">Cancel</a>
+  </div>
+</form>
+
+<div class="panel panel-flag" style="margin-top:1.4rem">
+  <h3 class="form-section-title">Remove this one class</h3>
+  <p class="panel-hint">
+    Cancelling keeps the record and frees the slot. Deleting removes it outright.
+    Neither affects the rest of the run.
+  </p>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+    <form method="post" action="{{ url_for('admin.cancel_schedule', cid=cls.id) }}">
+      <button class="btn btn-outline">Cancel it</button></form>
+    <form method="post" action="{{ url_for('admin.delete_schedule', cid=cls.id) }}"
+          onsubmit="return confirm('Delete this class?')">
+      <button class="btn btn-danger">Delete it</button></form>
+  </div>
+</div>
+</div>
+
+<style>
+.opt-btn{font-size:.8rem;padding:.25rem .6rem;border:1.5px solid var(--line);
+  border-radius:99px;background:#fff;cursor:pointer}
+.opt-btn:hover{border-color:var(--red);color:var(--red-dk)}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.use-opt').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.getElementById('sFrom').value = b.dataset.from;
+    document.getElementById('sTo').value = b.dataset.to;
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  });
+});
+</script>
+{% endblock %}

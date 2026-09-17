@@ -1,100 +1,110 @@
 {% extends "base.html" %}
 {% import "partials/macros.html" as m %}
-{% block title %}Reports · {{ org_name }}{% endblock %}
+{% block title %}Reports · PIE Scheduler{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><h1 class="page-title">Reports</h1>
-    <p class="page-sub">{{ window_label }} · {{ rows|length }} student(s) shown.</p></div>
+  <div>
+    <h1 class="page-title">Reports</h1>
+    <p class="page-sub">{{ window_label }}</p>
+  </div>
   <div class="head-actions">
-    <a class="btn btn-outline-dark" href="{{ url_for('admin.students_export', **request.args) }}">Export this list</a>
+    <form method="get" style="display:flex;gap:.4rem">
+      <select class="form-select" name="term_id" style="max-width:180px" onchange="this.form.submit()">
+        {% for t in terms %}
+          <option value="{{ t.id }}" {{ 'selected' if window_label == t.name }}>{{ t.name }}</option>
+        {% endfor %}
+        <option value="all" {{ 'selected' if window_label == 'All time' }}>All time</option>
+      </select>
+    </form>
+    <a class="btn btn-primary" href="{{ url_for('admin.schedule_pdf') }}">Schedule PDF</a>
+    <a class="btn btn-outline" href="{{ url_for('admin.schedule_export') }}">Schedule CSV</a>
   </div>
 </div>
 
-<form class="filter-bar" method="get">
-  <div class="fb-search">
-    <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Search by name or ID">
+<!-- Teacher workload -->
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">Teacher workload</h2>
+    <span class="sub">Classes scheduled inside {{ window_label }}</span>
   </div>
-  <select class="form-select" name="branch">
-    <option value="">All branches</option>
-    {% for b in BRANCHES %}<option value="{{ b }}" {% if filters.branch == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
-  </select>
-  <select class="form-select" name="batch_id">
-    <option value="">All batches</option>
-    {% for b in batches %}<option value="{{ b.id }}" {% if filters.batch_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
-  </select>
-  <select class="form-select" name="course_id">
-    <option value="">All courses</option>
-    {% for c in courses %}<option value="{{ c.id }}" {% if filters.course_id == c.id %}selected{% endif %}>{{ c.course_code }}</option>{% endfor %}
-  </select>
-  <select class="form-select" name="below">
-    <option value="">Any attendance</option>
-    {% for v in [90, 80, 75, 60, 50] %}
-      <option value="{{ v }}" {% if below == v %}selected{% endif %}>Below {{ v }}%</option>
-    {% endfor %}
-  </select>
-  <select class="form-select" name="term_id">
-    {% for t in terms %}<option value="{{ t.id }}" {% if window_label == t.name %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
-    <option value="all" {% if window_label == 'All time' %}selected{% endif %}>All time</option>
-  </select>
-  <button class="btn btn-primary">Apply</button>
-  <a class="btn btn-link" href="{{ url_for('admin.reports') }}">Clear</a>
-</form>
-
-<div class="panel p-0 mb-4">
-  <div class="panel-pad"><h2 class="panel-title mb-0">Attendance by student</h2></div>
-  <div class="table-responsive scroll-box">
-    <table class="table align-middle mb-0 list-table">
-      <thead><tr><th>Student ID</th><th>Name</th><th>Branch</th><th>Batch</th>
-        <th class="text-end">Held</th><th class="text-end">Attended</th>
-        <th class="text-end">Late</th><th class="text-end">Absent</th>
-        <th style="width:140px">Attendance</th></tr></thead>
-      <tbody>
-      {% for r in rows %}
-        <tr>
-          <td class="mono">{{ r.student.username }}</td>
-          <td><a href="{{ url_for('admin.student_profile', student_id=r.student.id, **request.args) }}">{{ r.student.full_name }}</a></td>
-          <td class="small">{{ r.student.branch or '—' }}</td>
-          <td class="small">{{ r.student.batch.name if r.student.batch else '—' }}</td>
-          <td class="text-end mono">{{ r.held }}</td>
-          <td class="text-end mono">{{ r.attended }}</td>
-          <td class="text-end mono">{{ r.late }}</td>
-          <td class="text-end mono">{{ r.absent }}</td>
-          <td>{{ m.meter(r.percent, r.held) }}</td>
-        </tr>
-      {% else %}
-        <tr><td colspan="9" class="empty-line p-4">No students match those filters.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="panel p-0">
-  <div class="panel-pad"><h2 class="panel-title mb-0">By course</h2></div>
   <div class="table-responsive">
-    <table class="table align-middle mb-0 list-table">
-      <thead><tr><th>Code</th><th>Course</th><th class="text-end">Sessions</th>
-        <th class="text-end">Students</th><th class="text-end">Records</th>
-        <th style="width:140px">Attendance</th><th>Downloads</th></tr></thead>
+    <table class="list-table">
+      <thead>
+        <tr><th>Teacher</th><th>Total classes</th><th>Hours</th>
+            <th>Completed</th><th>Cancelled</th><th>Student absent</th></tr>
+      </thead>
       <tbody>
-      {% for r in course_rows %}
-        <tr>
-          <td>{{ m.plain_code(r.course) }}</td>
-          <td><a href="{{ url_for('admin.course_detail', course_id=r.course.id) }}">{{ r.course.course_name }}</a></td>
-          <td class="text-end mono">{{ r.sessions }}</td>
-          <td class="text-end mono">{{ r.enrolled }}</td>
-          <td class="text-end mono">{{ r.held }}</td>
-          <td>{{ m.meter(r.percent, r.held) }}</td>
-          <td class="nowrap">
-            <a class="small" href="{{ url_for('admin.attendance_export', course_id=r.course.id, **request.args) }}">Attendance</a> ·
-            <a class="small" href="{{ url_for('admin.marksheet_export', course_id=r.course.id) }}">Marks</a>
-          </td>
-        </tr>
+      {% for w in workload %}
+      <tr>
+        <td>
+          {{ w.teacher.full_name }}
+          {% if w.teacher.subjects %}<div class="sub">{{ w.teacher.subjects }}</div>{% endif %}
+        </td>
+        <td class="mono">{{ w.total }}</td>
+        <td class="mono">{{ w.hours }}</td>
+        <td class="mono" style="color:var(--ok)">{{ w.done }}</td>
+        <td class="mono" style="color:var(--ink-soft)">{{ w.cancelled }}</td>
+        <td class="mono" style="color:var(--warn)">{{ w.student_absent }}</td>
+      </tr>
       {% else %}
-        <tr><td colspan="7" class="empty-line p-4">No courses yet.</td></tr>
+      <tr><td colspan="6" class="empty-line">No teachers yet.</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+</div>
+
+<!-- At-risk students -->
+<div class="panel p-0">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">
+      Students needing follow-up <span class="count-pill">{{ at_risk|length }}</span>
+    </h2>
+    <span class="sub">Attendance under 75%, or 3+ absences in a row</span>
+  </div>
+  {% if at_risk %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead>
+        <tr><th>ID</th><th>Student</th><th>Attendance</th>
+            <th>Classes held</th><th>Consecutive absent</th><th>Risk</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for r in at_risk %}
+      <tr>
+        <td class="mono sub">{{ r.student.username }}</td>
+        <td>
+          <a href="{{ url_for('admin.student_profile', sid=r.student.id) }}">{{ r.student.full_name }}</a>
+          {% if r.student.phone %}<div class="sub mono">{{ r.student.phone }}</div>{% endif %}
+        </td>
+        
+        <td>{{ m.meter(r.percent, r.held) }}</td>
+        <td class="mono">{{ r.held }}</td>
+        <td>
+          {% if r.consecutive >= 3 %}
+            <span class="pill pill-red">{{ r.consecutive }} in a row</span>
+          {% else %}
+            <span class="sub mono">{{ r.consecutive }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.low_att and r.consecutive >= 3 %}
+            <span class="pill pill-red">High</span>
+          {% else %}
+            <span class="pill pill-amber">Medium</span>
+          {% endif %}
+        </td>
+        <td>
+          <a class="btn btn-xs btn-outline"
+             href="{{ url_for('admin.student_profile', sid=r.student.id) }}">Open</a>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">Nobody needs following up right now.</p>
+  {% endif %}
 </div>
 {% endblock %}

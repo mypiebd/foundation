@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}Data check · PIE Scheduler{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Data check</h1>
+    <p class="page-sub">
+      A routine is built from class membership, not course enrolment.
+      Anything listed here will not print until it is connected up.
+    </p>
+  </div>
+</div>
+
+{% set fixable = stranded | selectattr('certain') | list %}
+
+<div class="stat-row">
+  <div class="stat-card">
+    <div class="stat-value" style="{{ 'color:var(--red)' if stranded }}">{{ stranded|length }}</div>
+    <div class="stat-label">Students in no class</div></div>
+  <div class="stat-card">
+    <div class="stat-value" style="{{ 'color:var(--ok)' if fixable }}">{{ fixable|length }}</div>
+    <div class="stat-label">Fixable in one click</div></div>
+  <div class="stat-card">
+    <div class="stat-value" style="{{ 'color:var(--warn)' if rows }}">{{ rows|length }}</div>
+    <div class="stat-label">Classes with nobody</div></div>
+</div>
+
+{% if stranded %}
+<div class="panel p-0" style="margin-bottom:1.25rem;border-left:3px solid var(--red)">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0;color:var(--red)">
+      Students whose routine would come out empty
+      <span class="count-pill">{{ stranded|length }}</span></h2>
+    <span class="sub">Enrolled on a subject, but not in a class</span>
+  </div>
+  <form method="post" action="{{ url_for('admin.data_check_attach') }}">
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th style="width:36px"></th><th>Student</th><th>Enrolled on</th>
+                 <th>Class it should be</th><th></th></tr></thead>
+      <tbody>
+      {% for t in stranded %}
+      <tr>
+        <td style="text-align:center">
+          {% if t.certain %}
+          <input type="checkbox" name="student_ids" value="{{ t.student.id }}" checked
+                 style="width:16px;height:16px">
+          {% endif %}
+        </td>
+        <td><div class="td-name">{{ t.student.full_name }}</div>
+            <div class="sub mono">{{ t.student.username }}</div></td>
+        <td>
+          {% for c in t.courses %}<span class="pill pill-navy">{{ c.course_code }}</span>{% endfor %}
+          {% if not t.courses %}<span class="sub">nothing</span>{% endif %}
+        </td>
+        <td class="sub">
+          {% if t.suggest %}
+            {% for g in t.suggest %}{{ g.name|truncate(38) }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+          {% else %}
+            <span style="color:var(--warn)">no single obvious class</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if t.certain %}<span class="pill pill-green">Certain</span>
+          {% else %}
+            <a class="btn btn-xs btn-outline"
+               href="{{ url_for('admin.classes') }}">Pick by hand</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if fixable %}
+  <div style="padding:.9rem 1.15rem;border-top:1px solid var(--line);
+              display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+    <button class="btn btn-primary">Attach the ticked students</button>
+    <span class="sub">Only where the subject has exactly one class, so there
+      is nothing to guess.</span>
+  </div>
+  {% endif %}
+  </form>
+</div>
+{% else %}
+<div class="panel" style="margin-bottom:1.25rem;border-left:3px solid var(--ok)">
+  <p style="margin:0">Every active student is in at least one class, so every
+    routine will print.</p>
+</div>
+{% endif %}
+
+<h3 style="font-family:'Segoe UI',system-ui,sans-serif;font-size:1rem;
+           font-weight:700;margin:0 0 .75rem">Classes with nobody attached</h3>
+
+{% if rows %}
+<div class="alert alert-warning">
+  <div>{{ rows|length }} occurrence(s) need attention. They are still on the
+    timetable — they simply will not print on a student routine.</div>
+</div>
+<div class="panel p-0">
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Date</th><th>Time</th><th>Class</th><th>Teacher</th>
+                 <th>Course</th><th></th></tr></thead>
+      <tbody>
+      {% for c in rows %}
+      <tr>
+        <td class="nowrap">{{ c.date.strftime('%d %b %Y') }}
+          <div class="sub">{{ c.date.strftime('%A') }}</div></td>
+        <td class="nowrap mono">{{ c.start_str }} - {{ c.end_str }}</td>
+        <td class="clip" title="{{ c.task }}">{{ c.task or '—' }}</td>
+        <td class="sub">{{ c.teacher.full_name if c.teacher else '—' }}</td>
+        <td>{% if c.course %}<span class="pill pill-navy">{{ c.course.course_code }}</span>
+            {% else %}<span class="sub">none</span>{% endif %}</td>
+        <td><a class="btn btn-xs btn-outline"
+               href="{{ url_for('admin.edit_schedule', cid=c.id) }}">Open</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="panel">
+  <p class="empty-line">Every scheduled class is attached to a group or a
+    student. Nothing to repair.</p>
+</div>
+{% endif %}
+{% endblock %}

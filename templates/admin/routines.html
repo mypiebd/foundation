@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Routines · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Routines</h1>
+    <p class="page-sub">
+      Produce any routine as a PDF — for one person, a whole batch, or everyone.
+    </p>
+  </div>
+</div>
+
+<div style="max-width:760px">
+<form method="get" action="{{ url_for('admin.routines_generate') }}">
+
+  <div class="panel" style="margin-bottom:1.25rem">
+    <h3 class="form-section-title">Who it is for</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
+
+      <label class="who-card">
+        <input type="radio" name="who" value="all_students" checked data-pick="">
+        <span><strong>All students</strong>
+          <span class="sub" style="display:block">One page each</span></span>
+      </label>
+
+      <label class="who-card">
+        <input type="radio" name="who" value="student" data-pick="pickStudent">
+        <span><strong>One student</strong>
+          <span class="sub" style="display:block">A single sheet to hand over</span></span>
+      </label>
+
+      <label class="who-card">
+        <input type="radio" name="who" value="course" data-pick="pickCourse">
+        <span><strong>A course</strong>
+          <span class="sub" style="display:block">Everyone enrolled on it</span></span>
+      </label>
+
+      <label class="who-card">
+        <input type="radio" name="who" value="all_teachers" data-pick="">
+        <span><strong>All teachers</strong>
+          <span class="sub" style="display:block">Staff timetables, one page each</span></span>
+      </label>
+
+      <label class="who-card">
+        <input type="radio" name="who" value="teacher" data-pick="pickTeacher">
+        <span><strong>One teacher</strong>
+          <span class="sub" style="display:block">A single staff timetable</span></span>
+      </label>
+
+      <label class="who-card">
+        <input type="radio" name="who" value="centre" data-pick="">
+        <span><strong>Whole centre</strong>
+          <span class="sub" style="display:block">Every class, day by day</span></span>
+      </label>
+
+
+    </div>
+
+    <div id="pickStudent" class="pick" style="display:none;margin-top:1rem">
+      <label class="form-label">Student</label>
+      <select class="form-select" name="student_id">
+        <option value="">— choose —</option>
+        {% for s in students %}
+          <option value="{{ s.id }}">{{ s.full_name }} ({{ s.username }})</option>
+        {% endfor %}
+      </select>
+      {% if not students %}<div class="form-hint" style="color:var(--red)">
+        No students yet.</div>{% endif %}
+    </div>
+
+  <div class="panel" style="margin-bottom:1.25rem">
+    <h3 class="form-section-title">Which dates</h3>
+    <div class="form-row cols-2" style="margin-bottom:.9rem">
+      <div>
+        <label class="form-label">From</label>
+        <input type="date" class="form-control" name="start" id="dFrom"
+               value="{{ today_str }}" required>
+      </div>
+      <div>
+        <label class="form-label">To</label>
+        <input type="date" class="form-control" name="end" id="dTo"
+               value="{{ month_end.isoformat() }}" required>
+      </div>
+    </div>
+    <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+      <button type="button" class="btn btn-outline btn-sm quick"
+              data-from="{{ week_start.isoformat() }}"
+              data-to="{{ week_end.isoformat() }}">This week</button>
+      <button type="button" class="btn btn-outline btn-sm quick"
+              data-from="{{ next_week_start.isoformat() }}"
+              data-to="{{ next_week_end.isoformat() }}">Next week</button>
+      <button type="button" class="btn btn-outline btn-sm quick"
+              data-from="{{ month_start.isoformat() }}"
+              data-to="{{ month_end.isoformat() }}">This month</button>
+      <button type="button" class="btn btn-outline btn-sm quick"
+              data-from="{{ today_str }}"
+              data-to="{{ (today + timedelta_30).isoformat() if timedelta_30 is defined else month_end.isoformat() }}">Next 30 days</button>
+    </div>
+  </div>
+
+  <button class="btn btn-primary">Produce PDF</button>
+</form>
+</div>
+
+<style>
+.who-card{display:flex;align-items:flex-start;gap:.5rem;padding:.7rem .85rem;
+  border:1.5px solid var(--line);border-radius:.3rem;cursor:pointer;
+  background:#fff;font-size:.88rem}
+.who-card:hover{border-color:var(--ink-soft)}
+.who-card:has(input:checked){border-color:var(--red);background:#fffafa}
+.who-card input{margin-top:.2rem;flex-shrink:0}
+@media(max-width:700px){
+  .panel > div[style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr !important}
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  function refresh() {
+    document.querySelectorAll('.pick').forEach(function (p) { p.style.display = 'none'; });
+    var sel = document.querySelector('input[name="who"]:checked');
+    if (!sel) return;
+    var id = sel.dataset.pick;
+    if (id) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = '';
+    }
+  }
+  document.querySelectorAll('input[name="who"]').forEach(function (r) {
+    r.addEventListener('change', refresh);
+  });
+  refresh();
+
+  document.querySelectorAll('.quick').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.getElementById('dFrom').value = b.dataset.from;
+      document.getElementById('dTo').value = b.dataset.to;
+    });
+  });
+})();
+</script>
+{% endblock %}

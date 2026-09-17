@@ -1,129 +1,94 @@
 {% extends "base.html" %}
-{% import "partials/macros.html" as m %}
-{% block title %}Notices · {{ org_name }}{% endblock %}
-
+{% block title %}Notices · PIE Scheduler{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1 class="page-title">Notices</h1>
-    <p class="page-sub">General announcements. Teachers post their own notices inside
-      each course.</p>
+    <p class="page-sub">Announcements shown on students' and teachers' dashboards.</p>
   </div>
 </div>
 
-<div class="row g-4">
-  <div class="col-lg-5">
-    <div class="panel">
-      <h2 class="panel-title">Post a notice</h2>
-      <form method="post" action="{{ url_for('admin.create_notice') }}">
-        <div class="mb-3">
-          <label class="form-label">Heading</label>
-          <input class="form-control" name="title" required
-                 placeholder="Centre closed on Thursday">
+<div class="form-row cols-2" style="gap:1.25rem">
+
+  <div class="panel">
+    <h2 class="panel-title">Post a notice</h2>
+    <form method="post" action="{{ url_for('admin.create_notice') }}">
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Title <span class="req">*</span></label>
+        <input class="form-control" name="title" required
+               placeholder="e.g. Centre closed for Eid holidays">
+      </div>
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Message</label>
+        <textarea class="form-control" name="body" rows="4"
+                  placeholder="Full details…"></textarea>
+      </div>
+      <div class="form-row cols-2" style="margin-bottom:.85rem">
+        <div>
+          <label class="form-label">Show to</label>
+          <select class="form-select" name="audience">
+            <option value="STUDENTS">Students only</option>
+            <option value="TEACHERS">Teachers only</option>
+            <option value="EVERYONE">Everyone</option>
+          </select>
         </div>
-        <div class="mb-3">
-          <label class="form-label">Details</label>
-          <textarea class="form-control" name="body" rows="4"
-                    placeholder="Classes resume on Sunday at the usual times."></textarea>
+        <div>
+          <label class="form-label">Stop showing on</label>
+          <input type="date" class="form-control" name="expires_on">
+          <div class="form-hint">Leave blank to show indefinitely.</div>
         </div>
-        <div class="row g-3 mb-3">
-          <div class="col-6">
-            <label class="form-label">Who sees it</label>
-            <select class="form-select" name="audience">
-              <option value="STUDENTS">Students</option>
-              <option value="TEACHERS">Teachers</option>
-              <option value="EVERYONE">Everyone</option>
-            </select>
-          </div>
-          <div class="col-6">
-            <label class="form-label">Take down on</label>
-            <input type="date" class="form-control" name="expires_on">
-          </div>
+      </div>
+      <div class="form-row cols-2" style="margin-bottom:1rem">
+        <div>
+          <label class="form-label">Branch (optional)</label>
+          <select class="form-select" name="branch">
+            <option value="">All branches</option>
+            {% for b in BRANCHES %}<option>{{ b }}</option>{% endfor %}
+          </select>
         </div>
-        <div class="row g-3 mb-3">
-          <div class="col-6">
-            <label class="form-label">Branch</label>
-            <select class="form-select" name="branch">
-              <option value="">All branches</option>
-              {% for b in BRANCHES %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
-            </select>
-          </div>
-          <div class="col-6">
-            <label class="form-label">Batch</label>
-            <select class="form-select" name="batch_id">
-              <option value="">All batches</option>
-              {% for b in batches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
-            </select>
-          </div>
+        <div>
         </div>
-        <label class="form-check mb-3">
-          <input class="form-check-input" type="checkbox" name="is_urgent" value="1">
-          <span class="form-check-label">Mark as urgent — shown in red, at the top</span>
-        </label>
-        <button class="btn btn-primary w-100">Post the notice</button>
-      </form>
-      <p class="panel-hint mt-3 mb-0">Leaving the take-down date blank means it stays
-        until you remove it. Set it and the notice disappears by itself.</p>
-    </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:.4rem;font-size:.85rem;
+                    margin-bottom:1rem;color:var(--red);font-weight:600">
+        <input type="checkbox" name="is_urgent" value="1">
+        Mark as urgent (pinned at the top in red)
+      </label>
+      <button class="btn btn-primary">Post notice</button>
+    </form>
   </div>
 
-  <div class="col-lg-7">
-    <div class="panel">
-      <h2 class="panel-title">Showing now <span class="count-pill">{{ live|length }}</span></h2>
-      {% if live %}
-        <ul class="notice-list">
-        {% for n in live %}
-          <li class="notice {% if n.is_urgent %}is-urgent{% endif %}">
-            <div class="notice-meta">
-              <span class="notice-scope">{{ n.scope }}</span>
-              {% if n.course_id %}<span class="notice-tag">Course notice</span>
-              {% else %}<span class="notice-tag">{{ n.audience|capitalize }}</span>{% endif %}
-              {% if n.is_urgent %}<span class="notice-tag urgent">Urgent</span>{% endif %}
-              <span class="ms-auto mono">{{ n.created_at.strftime('%d %b') }}</span>
-            </div>
-            <h3 class="notice-title">{{ n.title }}</h3>
-            {% if n.body %}<p class="notice-body">{{ n.body }}</p>{% endif %}
-            <div class="notice-foot">
-              <span>{{ n.author.full_name }}{% if n.expires_on %} · until
-                {{ n.expires_on.strftime('%d %b %Y') }}{% endif %}</span>
-              <span class="ms-auto">
-                <form class="d-inline" method="post"
-                      action="{{ url_for('admin.expire_notice', notice_id=n.id) }}">
-                  <button class="btn btn-sm btn-link">Take down</button></form>
-                <form class="d-inline" method="post"
-                      action="{{ url_for('admin.delete_notice', notice_id=n.id) }}"
-                      onsubmit="return confirm('Delete this notice for good?')">
-                  <button class="btn btn-sm btn-link text-danger">Delete</button></form>
-              </span>
-            </div>
-          </li>
-        {% endfor %}
-        </ul>
-      {% else %}
-        <p class="empty-line">Nothing is showing. Post a notice on the left.</p>
-      {% endif %}
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        Posted <span class="count-pill">{{ notices|length }}</span>
+      </h2>
     </div>
-
-    {% if expired %}
-    <div class="panel mt-4">
-      <h2 class="panel-title">Taken down <span class="count-pill">{{ expired|length }}</span></h2>
-      <table class="table table-sm align-middle mb-0">
-        <tbody>
-        {% for n in expired %}
-          <tr class="row-muted">
-            <td class="mono small nowrap">{{ n.created_at.strftime('%d %b %Y') }}</td>
-            <td>{{ n.title }}<div class="sub">{{ n.scope }} · {{ n.author.full_name }}</div></td>
-            <td class="text-end">
-              <form method="post" action="{{ url_for('admin.delete_notice', notice_id=n.id) }}"
-                    onsubmit="return confirm('Delete this notice for good?')">
-                <button class="btn btn-sm btn-link text-danger">Delete</button></form>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% if notices %}
+    <ul class="notice-list">
+      {% for n in notices %}
+      <li class="notice {{ 'is-urgent' if n.is_urgent }}">
+        <div class="notice-meta">
+          {% if n.is_urgent %}<span class="notice-tag urgent">Urgent</span>{% endif %}
+          <span class="pill pill-gray">{{ n.audience|title }}</span>
+          <span>{{ n.scope }}</span>
+          <span>&middot; {{ n.created_at.strftime('%d %b %Y') }}</span>
+          {% if n.is_expired %}<span class="pill pill-gray">Expired</span>
+          {% elif n.expires_on %}<span class="sub">until {{ n.expires_on.strftime('%d %b') }}</span>{% endif %}
+        </div>
+        <div class="notice-title">{{ n.title }}</div>
+        {% if n.body %}<div class="notice-body">{{ n.body }}</div>{% endif %}
+        <form method="post" action="{{ url_for('admin.delete_notice', nid=n.id) }}"
+              onsubmit="return confirm('Delete this notice?')">
+          <button class="btn btn-xs btn-link" style="color:var(--red)">Delete</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty-line">No notices posted yet.</p>
     {% endif %}
   </div>
+
 </div>
 {% endblock %}

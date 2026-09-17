@@ -1,26 +1,59 @@
-{% extends "base.html" %}
-{% block title %}Sign in · {{ org_name }}{% endblock %}
-{% block content %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — PIE Scheduler</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
 <div class="login-wrap">
-  <div class="login-card">
-    <div class="login-mark">
-      <span class="wm-into">INTO</span><span class="wm-chev">&rsaquo;&rsaquo;</span><span class="wm-pie">PIE</span>
-    </div>
-    <h1 class="login-title">Pathways</h1>
-    <p class="login-sub">Sign in with the ID and password the office gave you.</p>
-    <form method="post" novalidate>
-      <div class="mb-3">
-        <label class="form-label" for="username">Student ID or username</label>
-        <input class="form-control form-control-lg" id="username" name="username"
-               autocomplete="username" autofocus required>
+  <div class="login-box">
+    <div class="login-logo">PIE<span> Scheduler</span></div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }}">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="POST" action="{{ url_for('login') }}">
+      <div style="margin-bottom:1rem">
+        <label class="form-label" for="username">Username</label>
+        <input class="form-control" id="username" name="username"
+               autocomplete="username" autofocus required
+               placeholder="Your username or student ID">
       </div>
-      <div class="mb-4">
+      <div style="margin-bottom:1.4rem">
         <label class="form-label" for="password">Password</label>
-        <input type="password" class="form-control form-control-lg" id="password"
-               name="password" autocomplete="current-password" required>
+        <input class="form-control" id="password" name="password"
+               type="password" autocomplete="current-password" required>
       </div>
-      <button class="btn btn-primary btn-lg w-100" type="submit">Sign in</button>
+      <button class="btn btn-primary btn-w" type="submit">Sign in</button>
     </form>
+
+    <div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--line)">
+      <details style="font-size:.8rem;color:var(--ink-soft)">
+        <summary style="cursor:pointer;font-weight:600">Change password</summary>
+        <form method="POST" action="{{ url_for('change_password') }}" style="margin-top:.75rem">
+          <input type="hidden" name="current_password" placeholder="Current password">
+          <div style="margin-bottom:.5rem">
+            <input class="form-control" name="current_password"
+                   type="password" placeholder="Current password">
+          </div>
+          <div style="margin-bottom:.5rem">
+            <input class="form-control" name="new_password"
+                   type="password" placeholder="New password (min 6 chars)">
+          </div>
+          <div style="margin-bottom:.75rem">
+            <input class="form-control" name="confirm_password"
+                   type="password" placeholder="Confirm new password">
+          </div>
+          <button class="btn btn-outline btn-sm btn-w">Update password</button>
+        </form>
+      </details>
+    </div>
   </div>
 </div>
-{% endblock %}
+</body>
+</html>

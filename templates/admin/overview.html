@@ -1,121 +1,261 @@
 {% extends "base.html" %}
 {% import "partials/macros.html" as m %}
-{% block title %}Dashboard · {{ org_name }}{% endblock %}
-
+{% block title %}Dashboard · PIE Scheduler{% endblock %}
 {% block content %}
+
 <div class="page-head">
   <div>
-    <h1 class="page-title">Dashboard</h1>
-    <p class="page-sub">Showing {{ window_label|lower }}.</p>
+    <h1 class="page-title">Today</h1>
+    <p class="page-sub">{{ today.strftime('%A, %d %B %Y') }}</p>
   </div>
-  {{ m.term_filter(terms, window_label) }}
+  <div class="head-actions">
+    <a class="btn btn-primary" href="{{ url_for('admin.class_new') }}">+ Set up a class</a>
+    <a class="btn btn-outline" href="{{ url_for('admin.calendar', view='day') }}">Today's timetable</a>
+    <a class="btn btn-outline" href="{{ url_for('admin.routines') }}">Routines PDF</a>
+  </div>
 </div>
 
 {% if show_setup %}
-<div class="panel panel-flag mb-4">
-  <h2 class="panel-title">Start here</h2>
-  <p class="panel-hint">Work down this list once. Each step unlocks the next —
-    teachers and students see nothing until step 6 is done.</p>
-  <ol class="setup-list">
-    {% for step in setup %}
-      <li class="{% if step.done %}is-done{% endif %}">
-        <span class="setup-mark">{{ '✓' if step.done else loop.index }}</span>
-        <span class="setup-body">
-          <a href="{{ step.where }}">{{ step.label }}</a>
-          <span class="sub">{{ step.why }}</span>
-        </span>
-      </li>
+<div class="panel panel-flag" style="margin-bottom:1.25rem">
+  <h2 class="panel-title">Getting started</h2>
+  <ul class="setup-list">
+    {% for s in setup %}
+    <li class="setup-item">
+      <span class="setup-icon {{ 'done' if s.done }}">{% if s.done %}&check;{% endif %}</span>
+      <div>
+        {% if s.done %}<span style="color:var(--ok)">{{ s.label }}</span>
+        {% else %}<a href="{{ s.where }}">{{ s.label }}</a>{% endif %}
+        <div class="setup-why">{{ s.why }}</div>
+      </div>
+    </li>
     {% endfor %}
-  </ol>
+  </ul>
 </div>
 {% endif %}
 
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3">
-    <a class="stat-card" href="{{ url_for('admin.students') }}">
-      <span class="stat-value">{{ counts.students }}</span>
-      <span class="stat-label">Active students</span></a>
-  </div>
-  <div class="col-6 col-lg-3">
-    <a class="stat-card" href="{{ url_for('admin.teachers') }}">
-      <span class="stat-value">{{ counts.teachers }}</span>
-      <span class="stat-label">Teachers</span></a>
-  </div>
-  <div class="col-6 col-lg-3">
-    <a class="stat-card" href="{{ url_for('admin.courses') }}">
-      <span class="stat-value">{{ counts.courses }}</span>
-      <span class="stat-label">Courses</span></a>
-  </div>
-  <div class="col-6 col-lg-3">
-    <a class="stat-card {% if storage.over_budget %}is-warn{% endif %}" href="{{ url_for('admin.storage') }}">
-      <span class="stat-value">{{ storage.mb }}<span class="stat-unit">MB</span></span>
-      <span class="stat-label">Files stored, of {{ storage.hard_mb }} MB</span></a>
-  </div>
+<div class="stat-row">
+  <div class="stat-card"><div class="stat-value">{{ counts.today }}</div>
+    <div class="stat-label">Classes today</div></div>
+  <div class="stat-card"><div class="stat-value">{{ counts.groups }}</div>
+    <div class="stat-label">Classes running</div></div>
+  <div class="stat-card"><div class="stat-value">{{ counts.students }}</div>
+    <div class="stat-label">Students</div></div>
+  <div class="stat-card"><div class="stat-value">{{ counts.teachers }}</div>
+    <div class="stat-label">Teachers</div></div>
+  <div class="stat-card">
+    <div class="stat-value" style="{{ 'color:var(--red)' if pending }}">{{ pending|length }}</div>
+    <div class="stat-label">Not written up</div></div>
 </div>
 
-<div class="row g-4">
-  <div class="col-lg-6">
-    <div class="panel">
-      <div class="panel-head">
-        <h2 class="panel-title">Attendance below 75%</h2>
-        <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin.reports', below=75) }}">Full report</a>
+{# Not written up #}
+{% if pending %}
+<div class="panel p-0" style="margin-bottom:1.25rem;border-left:3px solid var(--red)">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0;color:var(--red)">
+      Classes finished but not written up</h2>
+    <span class="sub">Attendance or lesson notes still missing</span>
+  </div>
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Teacher</th><th>Class</th><th>When</th><th>Missing</th><th></th></tr></thead>
+      <tbody>
+      {% for p in pending %}
+      <tr>
+        <td class="fw-600">{{ p.teacher.full_name }}</td>
+        <td class="clip" title="{{ p.cls.task }}">{{ p.cls.task or 'Class' }}</td>
+        <td class="nowrap sub">
+          {{ p.cls.date.strftime('%a %d %b') }} {{ p.cls.start_str }}
+          <div style="color:var(--red)">{{ p.hours_ago }}h ago</div>
+        </td>
+        <td>
+          {% if p.no_attendance %}<span class="pill pill-red">Attendance</span>{% endif %}
+          {% if p.no_log %}<span class="pill pill-amber">Lesson notes</span>{% endif %}
+        </td>
+        <td>
+          {% if p.cls.course_id %}
+          <a class="btn btn-xs btn-outline"
+             href="{{ url_for('teacher.class_record', cid=p.cls.id) }}">Open</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# Stacked-up warnings #}
+{% if day_warnings %}
+<div class="alert alert-warning" style="margin-bottom:1.25rem">
+  <div>
+    <strong>Back-to-back teaching today</strong>
+    {% for w in day_warnings %}
+    <div style="font-size:.85rem;margin-top:.2rem">
+      {{ w.teacher.full_name }} — {{ w.text }}
+      <a href="{{ url_for('admin.calendar', view='day', teacher_id=w.teacher.id) }}">fix it</a>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="form-row cols-2" style="gap:1.25rem;margin-bottom:1.25rem">
+
+  {# Today's classes #}
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">Today's classes</h2>
+      <a class="btn btn-sm btn-outline"
+         href="{{ url_for('admin.calendar', view='day') }}">Full day</a>
+    </div>
+    {% if todays %}
+    <div style="max-height:26rem;overflow-y:auto">
+      {% for c in todays %}
+      <div class="sched-row">
+        <div class="sched-time">{{ c.start_str }}
+          <span class="sched-end">to {{ c.end_str }}</span></div>
+        <div class="sched-task">
+          <div class="fw-600">{{ c.task or 'Class' }}</div>
+          <div class="sub">{{ c.teacher.full_name if c.teacher else '—' }}
+            {% if c.student %} &middot; {{ c.student.full_name }}{% endif %}
+            &middot; {{ c.venue }}</div>
+        </div>
+        <div class="sched-badges">
+          {{ m.pill_sched(c.status) }}
+          <a class="btn btn-xs btn-outline"
+             href="{{ url_for('admin.edit_schedule', cid=c.id) }}">Change</a>
+        </div>
       </div>
-      {% if at_risk %}
-        <table class="table table-sm align-middle mb-0">
-          <thead><tr><th>Student</th><th class="text-end">Held</th>
-                     <th class="text-end">Attended</th><th style="width:130px">Rate</th></tr></thead>
-          <tbody>
-          {% for r in at_risk %}
-            <tr>
-              <td><a href="{{ url_for('admin.student_profile', student_id=r.student.id) }}">{{ r.student.full_name }}</a>
-                <div class="sub mono">{{ r.student.username }}</div></td>
-              <td class="text-end mono">{{ r.held }}</td>
-              <td class="text-end mono">{{ r.attended }}</td>
-              <td>{{ m.meter(r.percent, r.held) }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      {% else %}<p class="empty-line">Nobody is below 75% in this period.</p>{% endif %}
+      {% endfor %}
     </div>
+    {% else %}
+    <p class="empty-line">Nothing scheduled today.</p>
+    {% endif %}
   </div>
 
-  <div class="col-lg-6">
-    <div class="panel">
-      <h2 class="panel-title">Work waiting to be marked</h2>
-      {% if unmarked %}
-        <table class="table table-sm align-middle mb-0">
-          <thead><tr><th>Course</th><th>Assessment</th><th>Teacher</th><th>Set</th></tr></thead>
-          <tbody>
-          {% for a in unmarked %}
-            <tr>
-              <td>{{ m.plain_code(a.course) }}</td>
-              <td>{{ a.title }}<div class="sub">{{ a.kind }}</div></td>
-              <td class="small">{{ a.teacher.full_name }}</td>
-              <td class="mono small nowrap">{{ a.assigned_date.strftime('%d %b') }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      {% else %}<p class="empty-line">Everything set has been marked.</p>{% endif %}
+  {# Free slots #}
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        Free right now <span class="count-pill">{{ free|length }}</span></h2>
+      <span class="sub">An hour or more</span>
     </div>
-
-    <div class="panel mt-4">
-      <h2 class="panel-title">Latest classes taught</h2>
-      {% if lessons %}
-        <table class="table table-sm align-middle mb-0">
-          <tbody>
-          {% for l in lessons %}
-            <tr>
-              <td class="nowrap mono small">{{ l.class_date.strftime('%d %b') }}</td>
-              <td>{{ m.plain_code(l.course) }}</td>
-              <td>{{ l.topic_taught }}<div class="sub">{{ l.teacher.full_name }}</div></td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      {% else %}<p class="empty-line">No classes logged yet.</p>{% endif %}
+    {% if free %}
+    <div style="max-height:26rem;overflow-y:auto">
+      {% for f in free %}
+      <div class="sched-row">
+        <div class="sched-time">{{ f.start.strftime('%I:%M %p').lstrip('0') }}
+          <span class="sched-end">to {{ f.end.strftime('%I:%M %p').lstrip('0') }}</span></div>
+        <div class="sched-task">
+          <div class="fw-600">{{ f.teacher.full_name }}</div>
+          <div class="sub">{{ (f.mins // 60) }}h {{ f.mins % 60 }}m free</div>
+        </div>
+        <div class="sched-badges">
+          <button type="button" class="btn btn-xs btn-primary fill-btn"
+            data-teacher="{{ f.teacher.id }}" data-date="{{ f.date.isoformat() }}"
+            data-from="{{ f.start.strftime('%H:%M') }}"
+            data-to="{{ f.end.strftime('%H:%M') }}"
+            data-who="{{ f.teacher.full_name }}">Fill it</button>
+        </div>
+      </div>
+      {% endfor %}
     </div>
+    {% else %}
+    <p class="empty-line">No free hours left today.</p>
+    {% endif %}
   </div>
 </div>
+
+{% if at_risk %}
+<div class="panel p-0">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">
+      Students to follow up <span class="count-pill">{{ at_risk|length }}</span></h2>
+    <a class="btn btn-sm btn-outline" href="{{ url_for('admin.reports') }}">Report</a>
+  </div>
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Student</th><th>Phone</th><th>Attendance</th><th>Missed in a row</th></tr></thead>
+      <tbody>
+      {% for r in at_risk %}
+      <tr>
+        <td><a href="{{ url_for('admin.student_profile', sid=r.student.id) }}">
+          {{ r.student.full_name }}</a></td>
+        <td class="sub mono">{{ r.student.phone or '—' }}</td>
+        <td>{{ m.meter(r.percent, r.held) }}</td>
+        <td>{% if r.consecutive >= 3 %}<span class="pill pill-red">{{ r.consecutive }}</span>
+            {% else %}<span class="sub">{{ r.consecutive }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- fill a free slot -->
+<div id="fillModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
+     z-index:9000;align-items:center;justify-content:center">
+  <div class="panel" style="width:100%;max-width:440px;margin:1rem">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem">
+      <h3 class="panel-title" style="margin:0">Use this slot</h3>
+      <button type="button" class="btn btn-link"
+              onclick="document.getElementById('fillModal').style.display='none'">&times;</button>
+    </div>
+    <form method="post" action="{{ url_for('admin.quick_add') }}">
+      <input type="hidden" name="teacher_id" id="fTeacher">
+      <input type="hidden" name="date" id="fDate">
+      <p class="sub" id="fWhen" style="margin-bottom:.8rem"></p>
+      <div class="form-row cols-2" style="margin-bottom:.8rem">
+        <div><label class="form-label">From</label>
+          <input type="time" class="form-control" name="start_time" id="fFrom"></div>
+        <div><label class="form-label">To</label>
+          <input type="time" class="form-control" name="end_time" id="fTo"></div>
+      </div>
+      <div style="margin-bottom:.8rem">
+        <label class="form-label">What for</label>
+        <select class="form-select" name="what" id="fWhat">
+          <option value="class">A class for a student</option>
+          <option value="break">Keep it clear (break, prayer, admin)</option>
+        </select>
+      </div>
+      <div id="fStuWrap" style="margin-bottom:.8rem">
+        <label class="form-label">Student</label>
+        <select class="form-select" name="student_id">
+          <option value="">— none —</option>
+          {% for s in students_list %}
+            <option value="{{ s.id }}">{{ s.full_name }} ({{ s.username }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="margin-bottom:1rem">
+        <label class="form-label">Label</label>
+        <input class="form-control" name="task" placeholder="e.g. Friday prayer, Makeup class">
+      </div>
+      <button class="btn btn-primary">Book it</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.fill-btn').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.getElementById('fTeacher').value = b.dataset.teacher;
+    document.getElementById('fDate').value = b.dataset.date;
+    document.getElementById('fFrom').value = b.dataset.from;
+    document.getElementById('fTo').value = b.dataset.to;
+    document.getElementById('fWhen').textContent =
+      (b.dataset.who ? b.dataset.who + ' — ' : '') +
+      'free ' + b.dataset.from + ' to ' + b.dataset.to;
+    document.getElementById('fillModal').style.display = 'flex';
+  });
+});
+var w = document.getElementById('fWhat');
+if (w) w.addEventListener('change', function () {
+  document.getElementById('fStuWrap').style.display = this.value === 'break' ? 'none' : '';
+});
+</script>
 {% endblock %}

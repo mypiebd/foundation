@@ -1,176 +1,223 @@
 {% extends "base.html" %}
 {% import "partials/macros.html" as m %}
-{% block title %}My learning · {{ org_name }}{% endblock %}
-
+{% block title %}My Learning · PIE Scheduler{% endblock %}
 {% block content %}
 <div class="student-head">
   <div>
-    <h1 class="page-title mb-1">{{ current_user.full_name }}</h1>
-    <p class="page-sub mb-0">
+    <h1 class="page-title">Hello, {{ current_user.full_name.split()[0] }}</h1>
+    <p style="margin:.4rem 0 0">
+      <a class="btn btn-primary btn-sm" href="{{ url_for('student.my_routine_pdf') }}">
+        Download my routine (PDF)
+      </a>
+    </p>
+    <p class="page-sub">
       <span class="mono">{{ current_user.username }}</span>
-      {% if current_user.batch %} · {{ current_user.batch.name }}{% endif %}
-      {% if current_user.branch %} · {{ current_user.branch }}{% endif %}
-      · {{ courses|length }} course(s)
+      
+      &middot; {{ window_label }}
     </p>
   </div>
   <div class="head-figures">
-    <div class="figure {% if overall.held and overall.percent < 75 %}is-low{% endif %}">
-      <span class="figure-number">{{ overall.percent }}<span class="figure-unit">%</span></span>
-      <span class="figure-label">
-        {% if overall.held %}attendance · {{ overall.attended }} of {{ overall.held }}
-        {% else %}no classes marked yet{% endif %}</span>
+    <div class="figure {{ 'is-low' if overall.percent < 75 and overall.held }}">
+      <div class="figure-number">{{ overall.percent }}<span class="figure-unit">%</span></div>
+      <div class="figure-label">Attendance</div>
     </div>
     <div class="figure">
-      <span class="figure-number">{{ average if average is not none else '—' }}{% if average is not none %}<span class="figure-unit">%</span>{% endif %}</span>
-      <span class="figure-label">average mark</span>
+      <div class="figure-number">{{ overall.attended }}</div>
+      <div class="figure-label">Classes attended of {{ overall.held }}</div>
+    </div>
+    <div class="figure">
+      <div class="figure-number">
+        {% if average is not none %}{{ average }}<span class="figure-unit">%</span>
+        {% else %}—{% endif %}
+      </div>
+      <div class="figure-label">Average mark</div>
     </div>
   </div>
 </div>
 
 {% if overall.held and overall.percent < 75 %}
-  <div class="alert alert-warning">Your attendance is below 75%. Speak to your teacher about catching up.</div>
+<div class="alert alert-warning">
+  Your attendance is below 75%. Speak to your teacher or the office if something is
+  getting in the way of coming to class.
+</div>
 {% endif %}
 
-{% if notices %}
-<div class="panel panel-flag mb-4">
-  <h2 class="panel-title">Notices <span class="count-pill">{{ notices|length }}</span></h2>
+{# Urgent notices #}
+{% set urgent = notices | selectattr('is_urgent') | list %}
+{% if urgent %}
+<div class="panel panel-flag p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .5rem">
+    <h2 class="panel-title" style="margin:0;color:var(--red)">Important notices</h2>
+  </div>
   <ul class="notice-list">
-  {% for n in notices %}
-    <li class="notice {% if n.is_urgent %}is-urgent{% endif %}">
+    {% for n in urgent %}
+    <li class="notice is-urgent">
       <div class="notice-meta">
-        <span class="notice-scope">{{ n.scope }}</span>
-        {% if n.is_urgent %}<span class="notice-tag urgent">Urgent</span>{% endif %}
-        <span class="ms-auto mono">{{ n.created_at.strftime('%d %b') }}</span>
+        <span class="notice-tag urgent">Urgent</span>
+        <span>{{ n.scope }}</span>
+        <span>&middot; {{ n.created_at.strftime('%d %b %Y') }}</span>
       </div>
-      <h3 class="notice-title">{{ n.title }}</h3>
-      {% if n.body %}<p class="notice-body">{{ n.body }}</p>{% endif %}
-      <div class="notice-foot"><span>{{ n.author.full_name }}</span></div>
+      <div class="notice-title">{{ n.title }}</div>
+      {% if n.body %}<div class="notice-body">{{ n.body }}</div>{% endif %}
     </li>
-  {% endfor %}
+    {% endfor %}
   </ul>
 </div>
 {% endif %}
 
-{% if due %}
-<div class="panel panel-flag mb-4">
-  <h2 class="panel-title">Work to hand in <span class="count-pill">{{ due|length }}</span></h2>
-  <div class="row g-3">
-    {% for w in due %}
-      {% set a = w.assessment %}
-      <div class="col-md-6">
-        <div class="work-card {% if a.is_overdue %}is-late{% endif %}">
-          <div class="work-top">
-            {{ m.plain_code(a.course) }}
-            <span class="work-kind">{{ a.kind }}</span>
-            <span class="work-due {% if a.is_overdue %}text-warn{% endif %}">
-              {% if a.due_date %}
-                {% if a.is_overdue %}Overdue — was due {{ a.due_date.strftime('%d %b') }}
-                {% else %}Due {{ a.due_date.strftime('%d %b') }}{% endif %}
-              {% else %}No due date{% endif %}
-            </span>
+<div class="form-row cols-2" style="gap:1.25rem;margin-bottom:1.25rem">
+
+  {# Upcoming classes #}
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        My next classes <span class="count-pill">{{ upcoming|length }}</span>
+      </h2>
+    </div>
+    {% if upcoming %}
+      {% for cls in upcoming %}
+      <div class="sched-row">
+        <div class="sched-time">
+          {{ cls.date.strftime('%d %b') }}
+          <span class="sched-end">{{ cls.date.strftime('%a') }}</span>
+        </div>
+        <div class="sched-task">
+          <div style="font-weight:600">{{ cls.start_str }} → {{ cls.end_str }}</div>
+          <div class="sub">
+            {{ cls.teacher.full_name if cls.teacher else '' }}
+            &middot; {{ cls.venue }}
           </div>
-          <h3 class="work-title">{{ a.title }}</h3>
-          {% if a.instructions %}<p class="work-body">{{ a.instructions }}</p>{% endif %}
-          {% if a.attachment_link %}
-            <p class="mb-2"><a href="{{ a.attachment_link }}" target="_blank" rel="noopener">Open the task</a></p>
-          {% endif %}
-          <form class="work-submit" method="post"
-                action="{{ url_for('student.submit', assessment_id=a.id) }}">
-            <input class="form-control form-control-sm" name="submission_link"
-                   placeholder="Paste your Google Drive link" required>
-            <button class="btn btn-sm btn-primary">Hand in</button>
-          </form>
-          <p class="work-hint">Set the link so anyone with it can view, or your teacher can't open it.</p>
         </div>
       </div>
-    {% endfor %}
+      {% endfor %}
+    {% else %}
+      <p class="empty-line">No classes scheduled yet. The office will book these for you.</p>
+    {% endif %}
   </div>
+
+  {# Work to do #}
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        Work to hand in <span class="count-pill">{{ pending|length }}</span>
+      </h2>
+    </div>
+    {% if pending %}
+    <div style="padding:.75rem 1.15rem;display:flex;flex-direction:column;gap:.75rem;
+                max-height:26rem;overflow-y:auto">
+      {% for r in pending %}
+      {% set a = r.assessment %}
+      <div class="work-card {{ 'is-late' if a.is_overdue }}">
+        <div class="work-top">
+          <span class="work-kind">{{ a.kind }}</span>
+          <span class="pill pill-navy">{{ a.course.course_code }}</span>
+          <span class="work-due">
+            {% if a.due_date %}
+              Due {{ a.due_date.strftime('%d %b') }}
+              {% if a.is_overdue %}<strong style="color:var(--red)"> · Overdue</strong>{% endif %}
+            {% else %}No due date{% endif %}
+          </span>
+        </div>
+        <div class="work-title">{{ a.title }}</div>
+        {% if a.instructions %}<div class="work-body">{{ a.instructions }}</div>{% endif %}
+        {% if a.attachment_link %}
+          <a class="btn btn-xs btn-outline" href="{{ a.attachment_link }}"
+             target="_blank" rel="noopener">Open the paper</a>
+        {% endif %}
+        <form method="post" action="{{ url_for('student.submit', aid=a.id) }}" class="work-submit">
+          <input class="form-control" name="submission_link"
+                 placeholder="Paste your Google Drive link here" required>
+          <button class="btn btn-sm btn-primary">Submit</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-line">Nothing outstanding. Well done.</p>
+    {% endif %}
+  </div>
+
+</div>
+
+{# My courses #}
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">My courses</h2>
+  </div>
+  {% if courses %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Course</th><th>Classes held</th><th>Attended</th>
+                 <th>My attendance</th><th></th></tr></thead>
+      <tbody>
+      {% for c in courses %}
+        {% set a = att.get(c.id, {}) %}
+        <tr>
+          <td>
+            <span class="pill pill-navy">{{ c.course_code }}</span>
+            <div style="margin-top:.2rem">{{ c.course_name }}</div>
+          </td>
+          <td class="mono">{{ a.get('held', 0) }}</td>
+          <td class="mono">{{ a.get('attended', 0) }}</td>
+          <td>{{ m.meter(a.get('percent', 0), a.get('held', 0)) }}</td>
+          <td>
+            <a class="btn btn-xs btn-primary"
+               href="{{ url_for('student.course', cid=c.id) }}">Open course</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">
+    You are not enrolled in any course yet. Contact the office if you think this is wrong.
+  </p>
+  {% endif %}
+</div>
+
+{# Other notices #}
+{% set normal = notices | rejectattr('is_urgent') | list %}
+{% if normal %}
+<div class="panel p-0">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">Notices</h2>
+  </div>
+  <ul class="notice-list">
+    {% for n in normal[:8] %}
+    <li class="notice">
+      <div class="notice-meta">
+        <span>{{ n.scope }}</span>
+        <span>&middot; {{ n.created_at.strftime('%d %b %Y') }}</span>
+      </div>
+      <div class="notice-title">{{ n.title }}</div>
+      {% if n.body %}<div class="notice-body">{{ n.body }}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
 </div>
 {% endif %}
 
-<div class="row g-4">
-  <div class="col-lg-7">
-    <div class="panel">
-      <div class="panel-head">
-        <h2 class="panel-title mb-0">Attendance by course</h2>
-        {{ m.term_filter(terms, window_label) }}
+<div style="margin-top:1.5rem">
+  <details class="panel">
+    <summary style="cursor:pointer;font-weight:700;font-size:.92rem">Change my password</summary>
+    <form method="post" action="{{ url_for('change_password') }}"
+          style="margin-top:1rem;max-width:320px">
+      <div style="margin-bottom:.7rem">
+        <label class="form-label">Current password</label>
+        <input class="form-control" name="current_password" type="password" required>
       </div>
-      {% if per_course %}
-      <table class="table align-middle mb-0">
-        <thead><tr><th>Course</th><th>Teacher</th><th class="text-end">Held</th>
-                   <th class="text-end">Attended</th><th style="width:140px">Rate</th></tr></thead>
-        <tbody>
-        {% for r in per_course %}
-          <tr>
-            <td>{{ m.plain_code(r.course) }}<div class="sub">{{ r.course.course_name }}</div></td>
-            <td class="small">{{ r.teacher.full_name if r.teacher else '—' }}</td>
-            <td class="text-end mono">{{ r.held }}</td>
-            <td class="text-end mono">{{ r.attended }}</td>
-            <td>{{ m.meter(r.percent, r.held) }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% else %}<p class="empty-line">You aren't enrolled in any course yet.</p>{% endif %}
-    </div>
-
-    <div class="panel mt-4">
-      <h2 class="panel-title">Lesson feed</h2>
-      {% if lessons %}
-        <ol class="feed">
-        {% for l in lessons %}
-          <li class="feed-item">
-            <div class="feed-meta">
-              {{ m.plain_code(l.course) }}
-              <span class="mono">{{ l.class_date.strftime('%d %b %Y') }}</span>
-              <span class="text-muted small">{{ l.teacher.full_name }}</span>
-            </div>
-            <h3 class="feed-title">{{ l.topic_taught }}</h3>
-            {% if l.summary_notes %}<p class="feed-body">{{ l.summary_notes }}</p>{% endif %}
-          </li>
-        {% endfor %}
-        </ol>
-      {% else %}<p class="empty-line">Nothing has been posted yet.</p>{% endif %}
-    </div>
-  </div>
-
-  <div class="col-lg-5">
-    <div class="panel">
-      <h2 class="panel-title">Results and feedback</h2>
-      {% if marked %}
-        <ul class="grade-list">
-        {% for w in marked %}
-          {% set a = w.assessment %}{% set r = w.result %}
-          <li class="grade-item">
-            <div class="grade-top">
-              <div>{{ m.plain_code(a.course) }}<span class="grade-name">{{ a.title }}</span></div>
-              <span class="grade-score {% if r.percent is not none and r.percent < 40 %}text-warn{% endif %}">
-                {{ '%g'|format(r.score) }}<span class="of">/{{ '%g'|format(a.max_score) }}</span></span>
-            </div>
-            <div class="grade-sub">{{ r.percent }}% · {{ a.kind }}
-              {% if a.assigned_date %}· {{ a.assigned_date.strftime('%d %b %Y') }}{% endif %}</div>
-            {% if r.feedback %}<p class="grade-feedback">{{ r.feedback }}</p>{% endif %}
-          </li>
-        {% endfor %}
-        </ul>
-      {% else %}<p class="empty-line">No marks published yet.</p>{% endif %}
-    </div>
-
-    <div class="panel mt-4">
-      <h2 class="panel-title">Course materials</h2>
-      {% if materials %}
-        <ul class="material-list">
-        {% for mat in materials %}
-          <li>
-            <a href="{{ url_for('open_material', material_id=mat.id) }}"
-               {% if mat.is_link %}target="_blank" rel="noopener"{% endif %}>{{ mat.title }}</a>
-            <span class="material-meta">{{ m.plain_code(mat.course) }}
-              {{ 'Link' if mat.is_link else 'File' }} · {{ mat.uploaded_at.strftime('%d %b %Y') }}</span>
-          </li>
-        {% endfor %}
-        </ul>
-      {% else %}<p class="empty-line">Your teachers haven't shared anything yet.</p>{% endif %}
-    </div>
-  </div>
+      <div style="margin-bottom:.7rem">
+        <label class="form-label">New password</label>
+        <input class="form-control" name="new_password" type="password" required
+               placeholder="At least 6 characters">
+      </div>
+      <div style="margin-bottom:1rem">
+        <label class="form-label">Confirm new password</label>
+        <input class="form-control" name="confirm_password" type="password" required>
+      </div>
+      <button class="btn btn-primary">Update password</button>
+    </form>
+  </details>
 </div>
 {% endblock %}

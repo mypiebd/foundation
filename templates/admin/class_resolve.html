@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Sort out the clashes · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('admin.class_new') }}">&larr; Start again</a></p>
+    <h1 class="page-title">Some of those times are taken</h1>
+    <p class="page-sub">
+      {{ name }} &middot; {{ teacher.full_name }}
+      {% if course %} &middot; {{ course.course_code }}{% endif %}
+      &middot; nothing has been created yet
+    </p>
+  </div>
+</div>
+
+<div class="alert alert-warning">
+  <div>
+    <strong>{{ problems|length }} of your {{ payload.slots|length }} time(s) will not fit as asked.</strong>
+    Pick what to do with each one below, then confirm. Nothing is booked until you do.
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('admin.class_create_resolved') }}">
+<input type="hidden" name="payload" value="{{ payload_json }}">
+
+{% set daynames = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}
+
+{# every slot, problem ones expanded #}
+{% for i in range(payload.slots|length) %}
+  {% set raw = payload.slots[i] %}
+  {% set prob = problems | selectattr('index','equalto',i) | first %}
+
+  {% if prob %}
+  <div class="panel" style="margin-bottom:1rem;border-left:3px solid var(--red)">
+    <div style="display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap;margin-bottom:.5rem">
+      <h3 style="font-family:'Segoe UI',sans-serif;font-size:1.02rem;font-weight:700;margin:0">
+        {{ daynames[raw[0]|int] }}
+        {{ prob.start.strftime('%I:%M %p').lstrip('0') }} –
+        {{ prob.end.strftime('%I:%M %p').lstrip('0') }}
+      </h3>
+      {% if prob.res.status == 'break' %}
+        <span class="pill pill-amber">Needs a break first</span>
+      {% else %}
+        <span class="pill pill-red">Taken</span>
+      {% endif %}
+      <span class="sub" style="margin-left:auto">
+        works on {{ prob.res.ok }} of the next {{ prob.res.total }} {{ daynames[raw[0]|int] }}s
+      </span>
+    </div>
+
+    <p class="sub" style="margin:0 0 .9rem">{{ prob.res.message }}</p>
+
+    <div class="fix-list">
+
+      {# same time, different teacher — the student loses nothing #}
+      {% for o in prob.opts.teachers %}
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}" value="teacher:{{ o.teacher.id }}"
+               {{ 'checked' if loop.first }}>
+        <span>
+          <strong>Keep {{ prob.start.strftime('%I:%M %p').lstrip('0') }} —
+            give it to {{ o.teacher.full_name }}</strong>
+          <span class="sub" style="display:block">
+            Same day, same time. Nobody has to be told anything.
+            {% if o.note %} ({{ o.note }}){% endif %}
+          </span>
+        </span>
+      </label>
+      {% endfor %}
+
+      {# same day, nearest working time #}
+      {% for t in prob.opts.times %}
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}"
+               value="time:{{ t.start.strftime('%H:%M') }}-{{ t.end.strftime('%H:%M') }}"
+               {{ 'checked' if loop.first and not prob.opts.teachers }}>
+        <span>
+          <strong>Move to {{ t.start.strftime('%I:%M %p').lstrip('0') }} –
+            {{ t.end.strftime('%I:%M %p').lstrip('0') }}</strong>
+          <span class="sub" style="display:block">
+            {{ t.label }}, same day, {{ teacher.full_name }}. Needs the student's agreement.
+          </span>
+        </span>
+      </label>
+      {% endfor %}
+
+      {# nothing at all #}
+      {% if not prob.opts.teachers and not prob.opts.times %}
+      <div class="alert alert-danger" style="margin:0 0 .5rem">
+        <div>Nothing is free on {{ daynames[raw[0]|int] }}s — every teacher is
+          booked or off. Skip this day and add it later, or go back and choose
+          a different day.</div>
+      </div>
+      {% endif %}
+
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}" value="skip"
+               {{ 'checked' if not prob.opts.teachers and not prob.opts.times }}>
+        <span>
+          <strong>Leave {{ daynames[raw[0]|int] }} out</strong>
+          <span class="sub" style="display:block">
+            The class runs on the other days. Add this one later if something frees up.
+          </span>
+        </span>
+      </label>
+
+      {% if prob.res.ok > 0 %}
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}" value="keep">
+        <span>
+          <strong>Book it anyway</strong>
+          <span class="sub" style="display:block">
+            {{ prob.res.ok }} of the next {{ prob.res.total }} dates are free;
+            the clashing ones are left out.
+          </span>
+        </span>
+      </label>
+      {% endif %}
+    </div>
+  </div>
+
+  {% else %}
+  <div class="panel" style="margin-bottom:1rem;border-left:3px solid var(--ok);
+              padding:.75rem 1.1rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+    <strong style="font-family:'Segoe UI',sans-serif;font-size:.95rem">
+      {{ daynames[raw[0]|int] }} {{ raw[1] }} – {{ raw[2] }}</strong>
+    <span class="pill pill-green">Free</span>
+    <span class="sub">Books as asked.</span>
+    <input type="hidden" name="fix_{{ i }}" value="keep">
+  </div>
+  {% endif %}
+{% endfor %}
+
+<div class="panel" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+  <button class="btn btn-primary">Confirm and create the class</button>
+  <a class="btn btn-link" href="{{ url_for('admin.class_new') }}">Go back and change it</a>
+  <span class="sub" style="margin-left:auto">
+    Picking a different teacher for some days creates one class record per teacher.
+  </span>
+</div>
+</form>
+
+<style>
+.fix-list{display:flex;flex-direction:column;gap:.4rem}
+.fix{display:flex;align-items:flex-start;gap:.55rem;padding:.6rem .8rem;
+  border:1.5px solid var(--line);border-radius:.3rem;cursor:pointer;
+  background:#fff;font-size:.88rem}
+.fix:hover{border-color:var(--ink-soft)}
+.fix:has(input:checked){border-color:var(--red);background:#fffafa}
+.fix input{margin-top:.22rem;flex-shrink:0}
+</style>
+{% endblock %}

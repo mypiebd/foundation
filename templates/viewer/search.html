@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Student records · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Student records</h1>
+    <p class="page-sub">Look up a student by name, ID or phone. This account
+      can view records but cannot change them.</p>
+  </div>
+</div>
+
+<div class="panel" style="margin-bottom:1.1rem">
+  <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end">
+    <div style="flex:1;min-width:240px">
+      <label class="form-label">Search</label>
+      <input class="form-control" name="q" value="{{ q }}" autofocus
+             placeholder="Name, student ID or phone number" autocomplete="off">
+    </div>
+    <button class="btn btn-primary">Search</button>
+    {% if q %}<a class="btn btn-link" href="{{ url_for('viewer.search') }}">Clear</a>{% endif %}
+    <span class="sub" style="margin-left:auto">{{ total }} active students on file</span>
+  </form>
+</div>
+
+{% if q %}
+<div class="panel p-0">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0">
+      Results <span class="count-pill">{{ rows|length }}</span></h2>
+  </div>
+  {% if rows %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Student ID</th><th>Name</th><th>Phone</th>
+                 <th>Classes</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="mono sub">{{ row.s.username }}</td>
+        <td><div class="td-name">{{ row.s.full_name }}</div>
+            {% if row.s.branch %}<div class="sub">{{ row.s.branch }}</div>{% endif %}</td>
+        <td class="mono sub">{{ row.s.phone or '—' }}</td>
+        <td>
+          {% if row.groups %}
+            {% for g in row.groups[:3] %}
+              <span class="pill {{ 'pill-green' if g.kind == 'Batch' else 'pill-blue' }}"
+                    title="{{ g.name }}">{{ g.course.course_code if g.course else g.name|truncate(14) }}</span>
+            {% endfor %}
+            {% if row.groups|length > 3 %}<span class="sub">+{{ row.groups|length - 3 }}</span>{% endif %}
+          {% else %}<span class="sub">none</span>{% endif %}
+        </td>
+        <td>{% if row.s.is_active %}<span class="pill pill-green">Active</span>
+            {% else %}<span class="pill pill-gray">Archived</span>{% endif %}</td>
+        <td><a class="btn btn-xs btn-outline"
+               href="{{ url_for('viewer.student', sid=row.s.id) }}">View</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">Nothing matched “{{ q }}”. Try part of the name,
+    or the student ID.</p>
+  {% endif %}
+</div>
+{% else %}
+<div class="panel">
+  <p class="empty-line">Type a name, student ID or phone number above to begin.</p>
+</div>
+{% endif %}
+{% endblock %}

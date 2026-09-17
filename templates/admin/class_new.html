@@ -1,0 +1,427 @@
+{% extends "base.html" %}
+{% block title %}Set up a class · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('admin.classes') }}">&larr; All classes</a></p>
+    <h1 class="page-title">Set up a class</h1>
+    <p class="page-sub">
+      Choose the subject, who teaches it, and the days and times it runs.
+      Each day can have its own time.
+    </p>
+  </div>
+</div>
+
+{% if not teachers_all %}
+<div class="alert alert-warning">
+  <div>No teachers yet. <a href="{{ url_for('admin.teachers') }}">Add one</a> and
+    set their working days and hours first — the timetable is built from those.</div>
+</div>
+{% endif %}
+
+<form method="post" class="warn-unsaved" id="classForm">
+<div class="split">
+
+  <div class="split-main">
+
+    <!-- Subject and shape -->
+    <div class="panel" style="margin-bottom:1.1rem">
+      <h3 class="form-section-title">Subject and shape</h3>
+
+      <div style="margin-bottom:1rem">
+        <label class="form-label">Subject <span class="req">*</span></label>
+        <select class="form-select" name="course_id" id="courseSel" required>
+          <option value="">— choose a subject —</option>
+          {% for c in courses %}
+            <option value="{{ c.id }}" data-name="{{ c.course_name }}">
+              {{ c.course_code }} — {{ c.course_name }}
+            </option>
+          {% endfor %}
+        </select>
+        <div class="form-hint">
+          The same subject can run as a batch and as one-to-ones.
+          <a href="{{ url_for('admin.courses') }}" target="_blank">Add a subject</a>
+          if it is missing.
+        </div>
+      </div>
+
+      <div style="margin-bottom:1rem">
+        <label class="form-label">How is it taught</label>
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+          <label class="pick-box">
+            <input type="radio" name="kind" value="Batch" checked id="kBatch">
+            <span><strong>Batch</strong>
+              <span class="sub" style="display:block">A group together</span></span>
+          </label>
+          <label class="pick-box">
+            <input type="radio" name="kind" value="1-on-1" id="kOne">
+            <span><strong>One-to-one</strong>
+              <span class="sub" style="display:block">A single student</span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-row cols-2">
+        <div>
+          <label class="form-label">Class name</label>
+          <input class="form-control" name="name" id="nameInput"
+                 placeholder="Leave blank to use the subject name">
+        </div>
+        <div>
+          <label class="form-label">Where</label>
+          <select class="form-select" name="venue">
+            <option value="Centre">Centre (in person)</option>
+            <option value="Online">Online</option>
+            <option value="Zoom">Zoom</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Teacher -->
+    <div class="panel" style="margin-bottom:1.1rem">
+      <h3 class="form-section-title">Who teaches it</h3>
+      <select class="form-select" name="teacher_id" id="teacherSel" required
+              style="max-width:340px">
+        <option value="">— choose a teacher —</option>
+        {% for t in teachers_all %}
+          <option value="{{ t.id }}"
+                  data-hours="{{ t.hours_label }}"
+                  data-off="{{ t.off_days_label }}">{{ t.full_name }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-hint" id="teacherHours">
+        Their working hours appear here once you choose.
+      </div>
+    </div>
+
+    <!-- Days and times -->
+    <div class="panel" style="margin-bottom:1.1rem">
+      <h3 class="form-section-title">Days and times</h3>
+      <p class="panel-hint" style="margin-bottom:.9rem">
+        Add a row for each day. A batch can meet Saturday at 10:00 and Tuesday
+        at 2:00 — the times do not have to match.
+      </p>
+
+      <div id="slotRows"></div>
+
+      <button type="button" class="btn btn-outline btn-sm" id="addSlot">
+        + Add a day
+      </button>
+      <button type="button" class="btn btn-link btn-sm" id="checkAll">
+        Check all times
+      </button>
+    </div>
+
+    <!-- Runs -->
+    <div class="panel" style="margin-bottom:1.1rem">
+      <h3 class="form-section-title">How long it runs</h3>
+      <div class="form-row cols-3">
+        <div>
+          <label class="form-label">First class</label>
+          <input type="date" class="form-control" name="start_date"
+                 value="{{ today_str }}">
+        </div>
+        <div>
+          <label class="form-label">Runs</label>
+          <select class="form-select" name="runs" id="runsSel">
+            <option value="forever">Until I stop it</option>
+            <option value="until">Until a set date</option>
+          </select>
+        </div>
+        <div id="endWrap" style="display:none">
+          <label class="form-label">Last class</label>
+          <input type="date" class="form-control" name="end_date">
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:.5rem;margin-bottom:2rem">
+      <button class="btn btn-primary">Create class</button>
+      <a class="btn btn-link" href="{{ url_for('admin.classes') }}">Cancel</a>
+    </div>
+  </div>
+
+  <!-- Students -->
+  <aside class="split-side">
+    <div class="panel" style="position:sticky;top:1rem">
+      <h3 class="form-section-title">Who attends</h3>
+      <p class="panel-hint" style="margin-bottom:.7rem" id="studentHint">
+        Tick everyone in this batch. You can add more later.
+      </p>
+      <input class="form-control" id="stuFilter" placeholder="Filter students…"
+             autocomplete="off" style="margin-bottom:.5rem">
+      <div id="stuList"
+           style="max-height:22rem;overflow-y:auto;border:1px solid var(--line);
+                  border-radius:.3rem;padding:.4rem">
+        {% for s in students %}
+        <label class="stu-row">
+          <input type="checkbox" name="student_ids" value="{{ s.id }}" class="stu-cb">
+          <span>{{ s.full_name }}</span>
+          <span class="sub mono" style="margin-left:auto">{{ s.username }}</span>
+        </label>
+        {% else %}
+        <p class="sub" style="margin:.4rem">
+          No students yet. <a href="{{ url_for('admin.students') }}">Add some</a> —
+          you can also create the class now and add them later.
+        </p>
+        {% endfor %}
+      </div>
+      <div class="sub" style="margin-top:.5rem"><span id="stuCount">0</span> selected</div>
+    </div>
+  </aside>
+</div>
+</form>
+
+<style>
+.split{display:grid;grid-template-columns:1fr 320px;gap:1.25rem;align-items:start}
+.split-side{min-width:0}
+.pick-box{flex:1;min-width:190px;display:flex;align-items:flex-start;gap:.5rem;
+  padding:.65rem .85rem;border:1.5px solid var(--line);border-radius:.3rem;
+  cursor:pointer;background:#fff;font-size:.88rem}
+.pick-box:has(input:checked){border-color:var(--red);background:#fffafa}
+.pick-box input{margin-top:.2rem;flex-shrink:0}
+.stu-row{display:flex;align-items:center;gap:.5rem;padding:.3rem .35rem;
+  font-size:.85rem;cursor:pointer;border-radius:.2rem}
+.stu-row:hover{background:var(--surface)}
+.slot-row{display:grid;grid-template-columns:150px 130px 130px auto 34px;
+  gap:.5rem;align-items:center;margin-bottom:.5rem}
+.slot-note{font-size:.8rem;min-height:1.1rem}
+.slot-note.ok{color:var(--ok)}
+.slot-note.warn{color:var(--warn)}
+.slot-note.bad{color:var(--red)}
+.slot-detail:not(:empty){margin:-.15rem 0 .7rem;padding:.65rem .8rem;
+  background:#fff7f7;border:1px solid #fbd5d5;border-radius:.3rem}
+.slot-detail .why{font-size:.82rem;color:#991b1b;line-height:1.5}
+.slot-detail .why b{font-weight:700}
+.slot-detail .dates{display:block;font-size:.76rem;color:var(--ink-soft);
+  margin-top:.15rem}
+.opts-lead{font-size:.78rem;color:var(--ink-soft);margin:.5rem 0 .35rem;font-weight:600}
+.opts-strip{display:flex;gap:.4rem;flex-wrap:wrap}
+.opt-btn{display:flex;flex-direction:column;align-items:flex-start;gap:.05rem;
+  font-size:.79rem;padding:.35rem .7rem;border:1.5px solid var(--line);
+  border-radius:.3rem;background:#fff;cursor:pointer;text-align:left;line-height:1.3}
+.opt-btn b{font-weight:600}
+.opt-btn i{font-style:normal;font-size:.72rem;color:var(--ink-soft)}
+.opt-btn:hover{border-color:var(--red);background:#fff}
+.opt-keep{border-left:3px solid var(--ok)}
+.opt-move{border-left:3px solid #C8860D}
+.no-opts{font-size:.8rem;color:var(--ink-soft);margin-top:.4rem}
+@media(max-width:1000px){
+  .split{grid-template-columns:1fr}
+  .slot-row{grid-template-columns:1fr 1fr;grid-auto-rows:auto}
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var DAYS = [['5','Saturday'],['6','Sunday'],['0','Monday'],['1','Tuesday'],
+              ['2','Wednesday'],['3','Thursday'],['4','Friday']];
+  var idx = 0;
+  var rows = document.getElementById('slotRows');
+
+  function addRow(day, from, to) {
+    var i = idx++;
+    var wrap = document.createElement('div');
+    wrap.className = 'slot-block';
+    var opts = DAYS.map(function (d) {
+      return '<option value="' + d[0] + '"' +
+             (day === d[0] ? ' selected' : '') + '>' + d[1] + '</option>';
+    }).join('');
+    wrap.innerHTML =
+      '<div class="slot-row">' +
+        '<select class="form-select slot-day" name="slot_day_' + i + '">' + opts + '</select>' +
+        '<input type="time" class="form-control slot-from" name="slot_from_' + i + '" value="' + (from || '10:00') + '">' +
+        '<input type="time" class="form-control slot-to" name="slot_to_' + i + '" value="' + (to || '11:30') + '">' +
+        '<div class="slot-note" data-i="' + i + '"></div>' +
+        '<button type="button" class="btn btn-link btn-sm rm" title="Remove">&times;</button>' +
+      '</div>' +
+      '<div class="slot-detail" data-opts="' + i + '"></div>';
+    rows.appendChild(wrap);
+    wrap.querySelector('.rm').addEventListener('click', function () {
+      wrap.remove(); updateCount();
+    });
+    ['.slot-day', '.slot-from', '.slot-to'].forEach(function (sel) {
+      wrap.querySelector(sel).addEventListener('change', function () { checkRow(wrap); });
+    });
+    return wrap;
+  }
+
+  function students() {
+    return Array.prototype.slice
+      .call(document.querySelectorAll('.stu-cb:checked'))
+      .map(function (c) { return c.value; });
+  }
+
+  function checkRow(wrap) {
+    var tid = document.getElementById('teacherSel').value;
+    var note = wrap.querySelector('.slot-note');
+    var box  = wrap.querySelector('.slot-detail');
+    box.innerHTML = '';
+    if (!tid) {
+      note.className = 'slot-note';
+      note.textContent = 'Pick a teacher to check this';
+      return;
+    }
+    var day = wrap.querySelector('.slot-day').value;
+    var a   = wrap.querySelector('.slot-from').value;
+    var b   = wrap.querySelector('.slot-to').value;
+    if (!a || !b) return;
+
+    var sd = document.querySelector('[name="start_date"]');
+    var ed = document.querySelector('[name="end_date"]');
+    var qs = '?teacher_id=' + tid + '&weekday=' + day + '&from=' + a + '&to=' + b;
+    if (sd && sd.value) qs += '&start=' + sd.value;
+    if (ed && ed.value && document.getElementById('runsSel').value === 'until')
+      qs += '&end=' + ed.value;
+    students().forEach(function (s) { qs += '&student_ids=' + s; });
+
+    note.className = 'slot-note';
+    note.textContent = 'Checking\u2026';
+
+    fetch('{{ url_for("admin.api_check_slot") }}' + qs)
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.status === 'ok') {
+          note.className = 'slot-note ok';
+          note.textContent = '\u2713 Free';
+          return;
+        }
+        if (d.status === 'unknown') {
+          note.className = 'slot-note';
+          note.textContent = d.message || '';
+          return;
+        }
+        note.className = 'slot-note ' + (d.status === 'break' ? 'warn' : 'bad');
+        note.textContent = d.summary || 'Not available';
+
+        var head = document.createElement('div');
+        head.className = 'why';
+        head.innerHTML = '<b>' + (d.status === 'break'
+          ? 'Needs a break first' : 'That time is taken') + '</b> &mdash; ' +
+          (d.message || '') +
+          (d.bad_dates && d.bad_dates.length
+            ? '<span class="dates">Clashes on ' + d.bad_dates.join(', ') +
+              (d.bad_dates.length >= 5 ? ' and more' : '') + '</span>' : '');
+        box.appendChild(head);
+
+        if (!d.options || !d.options.length) {
+          var none = document.createElement('div');
+          none.className = 'no-opts';
+          none.textContent = 'Nothing else is free that day. Try another day, ' +
+                             'or another teacher.';
+          box.appendChild(none);
+          return;
+        }
+
+        var lead = document.createElement('div');
+        lead.className = 'opts-lead';
+        lead.textContent = 'These would work \u2014 click one to use it:';
+        box.appendChild(lead);
+
+        var strip = document.createElement('div');
+        strip.className = 'opts-strip';
+        d.options.forEach(function (o) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'opt-btn ' + (o.kind === 'teacher' ? 'opt-keep' : 'opt-move');
+          btn.innerHTML = '<b>' + o.label + '</b><i>' + o.note + '</i>';
+          btn.addEventListener('click', function () {
+            wrap.querySelector('.slot-from').value = o.from;
+            wrap.querySelector('.slot-to').value = o.to;
+            if (o.kind === 'teacher') {
+              document.getElementById('teacherSel').value = o.teacher_id;
+              teacherChanged();
+              checkAll();
+            } else {
+              checkRow(wrap);
+            }
+          });
+          strip.appendChild(btn);
+        });
+        box.appendChild(strip);
+      })
+      .catch(function (e) {
+        note.className = 'slot-note bad';
+        note.textContent = 'Could not check that time — try again.';
+      });
+  }
+
+  function checkAll() {
+    document.querySelectorAll('.slot-block').forEach(checkRow);
+  }
+
+  document.getElementById('addSlot').addEventListener('click', function () {
+    addRow();
+  });
+  document.getElementById('checkAll').addEventListener('click', checkAll);
+  function teacherChanged() {
+    var sel = document.getElementById('teacherSel');
+    var o = sel.options[sel.selectedIndex];
+    var hours = (o && o.dataset.hours) || '';
+    var off = (o && o.dataset.off) || '';
+    document.getElementById('teacherHours').textContent =
+      hours && hours !== 'Not set'
+        ? hours + (off && off !== 'None' ? '   |   not working ' + off : '')
+        : 'Working hours not set for this teacher.';
+  }
+  document.getElementById('teacherSel').addEventListener('change', function () {
+    teacherChanged();
+    checkAll();
+  });
+
+  // Name defaults to the subject
+  document.getElementById('courseSel').addEventListener('change', function () {
+    var n = document.getElementById('nameInput');
+    var o = this.options[this.selectedIndex];
+    if (!n.value && o.dataset.name) n.placeholder = o.dataset.name;
+  });
+
+  // Batch vs one-to-one
+  function kindChanged() {
+    var one = document.getElementById('kOne').checked;
+    document.getElementById('studentHint').textContent = one
+      ? 'Pick the one student for this class.'
+      : 'Tick everyone in this batch. You can add more later.';
+    document.querySelectorAll('.stu-cb').forEach(function (c) {
+      c.type = 'checkbox';
+    });
+  }
+  ['kBatch', 'kOne'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', kindChanged);
+  });
+
+  function updateCount() {
+    document.getElementById('stuCount').textContent = students().length;
+  }
+  document.addEventListener('change', function (e) {
+    if (e.target.classList.contains('stu-cb')) { updateCount(); checkAll(); }
+  });
+
+  document.getElementById('stuFilter').addEventListener('input', function () {
+    var q = this.value.toLowerCase();
+    document.querySelectorAll('#stuList .stu-row').forEach(function (r) {
+      r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+
+  var runs = document.getElementById('runsSel');
+  runs.addEventListener('change', function () {
+    document.getElementById('endWrap').style.display =
+      runs.value === 'until' ? '' : 'none';
+    checkAll();
+  });
+  ['[name="start_date"]', '[name="end_date"]'].forEach(function (s) {
+    var el = document.querySelector(s);
+    if (el) el.addEventListener('change', checkAll);
+  });
+
+  addRow();   // start with one row
+  updateCount();
+  teacherChanged();
+})();
+</script>
+{% endblock %}

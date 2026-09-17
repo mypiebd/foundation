@@ -1,6 +1,6 @@
-Flask==3.0.3
-Flask-SQLAlchemy==3.1.1
-Flask-Login==0.6.3
-SQLAlchemy==2.0.30
-Werkzeug==3.0.3
-reportlab==4.2.2
+Flask>=2.3,<4
+Flask-SQLAlchemy>=3.0,<4
+Flask-Login>=0.6,<1
+Werkzeug>=2.3,<4
+fpdf2>=2.7
+openpyxl>=3.1

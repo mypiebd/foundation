@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Terms · PIE Scheduler{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Terms</h1>
+    <p class="page-sub">
+      A term sets the window attendance percentages are measured over.
+      Anything outside the current term does not count towards them.
+    </p>
+  </div>
+</div>
+
+{% set cur = terms | selectattr('is_current') | first %}
+{% if not cur %}
+<div class="alert alert-warning">
+  <div><strong>No current term.</strong> Attendance percentages will read 0%
+    until one is set.</div>
+</div>
+{% endif %}
+
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Term</th><th>From</th><th>To</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for t in terms %}
+      <tr>
+        <td class="td-name">{{ t.name }}</td>
+        <td class="nowrap">{{ t.start_date.strftime('%d %b %Y') }}</td>
+        <td class="nowrap">{{ t.end_date.strftime('%d %b %Y') }}</td>
+        <td>{% if t.is_current %}<span class="pill pill-green">Current</span>
+            {% else %}<span class="pill pill-gray">Past</span>{% endif %}</td>
+        <td>
+          {% if not t.is_current %}
+          <form method="post" action="{{ url_for('admin.set_current_term', tid=t.id) }}">
+            <button class="btn btn-xs btn-outline">Make current</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty-line">No terms yet.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel" style="max-width:600px">
+  <h3 class="form-section-title">Add a term</h3>
+  <form method="post" action="{{ url_for('admin.create_term') }}">
+    <div style="margin-bottom:.8rem">
+      <label class="form-label">Name <span class="req">*</span></label>
+      <input class="form-control" name="name" placeholder="e.g. Term 2 2027" required>
+    </div>
+    <div class="form-row cols-2" style="margin-bottom:1rem">
+      <div><label class="form-label">From <span class="req">*</span></label>
+        <input type="date" class="form-control" name="start_date" required></div>
+      <div><label class="form-label">To <span class="req">*</span></label>
+        <input type="date" class="form-control" name="end_date" required></div>
+    </div>
+    <button class="btn btn-primary">Add the term</button>
+  </form>
+</div>
+{% endblock %}

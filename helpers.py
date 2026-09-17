@@ -1,352 +1,1504 @@
-"""Shared query, permission and formatting helpers."""
-
+"""Shared helpers: clash checking, attendance maths, CSV builders, utilities."""
 import os
+import csv
+import io
 import random
 import string
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import abort, current_app, request
+from flask import abort, flash, redirect, request, url_for
 from flask_login import current_user
-from sqlalchemy import func, or_
+from sqlalchemy import func
 
-from models import (Announcement, Assessment, Attendance, Batch,
-                    ClassAssignment, Course, CourseMaterial, Result, Term,
-                    TeacherOffDay, User, db)
-
-ALLOWED_EXTENSIONS = {"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
-                      "txt", "csv", "zip", "png", "jpg", "jpeg", "gif"}
-PER_PAGE = 50
+from models import (Announcement, Assessment, Attendance, AuditLog,
+                    ClassAssignment, ClassSchedule, Course, Result,
+                    ScheduleAttendance, Term, User, db)
 
 
-# --------------------------------------------------------------- guards ----
+# ─────────────────────────────────────────────── auth helpers ────────────────
 
 def role_required(*roles):
-    def decorator(view):
-        @wraps(view)
-        def wrapped(*args, **kwargs):
+    def decorator(f):
+        @wraps(f)
+        def inner(*args, **kwargs):
             if not current_user.is_authenticated:
-                abort(401)
+                return redirect(url_for("login"))
             if current_user.role not in roles:
                 abort(403)
-            return view(*args, **kwargs)
-        return wrapped
+            return f(*args, **kwargs)
+        return inner
     return decorator
 
 
-def teaches(teacher_id, course_id):
-    return db.session.query(ClassAssignment.id).filter_by(
-        teacher_id=teacher_id, course_id=course_id).first() is not None
+def read_only_guard():
+    """
+    Registered as a before_request hook. The viewer account may look at
+    anything it is granted, but any write verb is refused at the door —
+    hiding the buttons is not protection.
+    """
+    if not current_user.is_authenticated:
+        return None
+    if current_user.role != "STUDENT_VIEWER":
+        return None
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        if request.endpoint in ("logout", "login", "change_password"):
+            return None
+        abort(403, description="This account can view student records but "
+                               "cannot change anything.")
+    # Block edit/new/delete screens reached by typing the address
+    ep = request.endpoint or ""
+    for word in ("edit", "new", "delete", "create", "remove", "archive",
+                 "reset", "bulk", "enrol", "assign", "mark", "pause",
+                 "resume", "stop", "extend", "top_up", "import"):
+        if word in ep:
+            abort(403, description="This account is read-only.")
+    return None
 
 
-def owned_course_or_404(course_id):
-    """Load a course the current teacher actually runs."""
-    course = db.session.get(Course, course_id)
-    if not course:
-        abort(404)
-    if current_user.is_teacher and not teaches(current_user.id, course.id):
-        abort(403)
-    return course
-
-
-def can_view_student(student):
-    if current_user.is_admin:
-        return True
-    if current_user.is_student:
-        return current_user.id == student.id
-    if current_user.is_teacher:
-        mine = {a.course_id for a in current_user.teaching_assignments}
-        theirs = {a.course_id for a in student.enrolments}
-        return bool(mine & theirs)
-    return False
-
-
-# ----------------------------------------------------------- small utils ----
-
-def parse_date(value, fallback=None):
-    if not value:
-        return fallback if fallback is not None else date.today()
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    except (ValueError, TypeError):
-        return fallback if fallback is not None else date.today()
-
+# ─────────────────────────────────────────────── password / ID ───────────────
 
 def make_password(length=8):
-    alphabet = string.ascii_lowercase + string.digits
-    return "".join(random.choice(alphabet) for _ in range(length))
+    chars = string.ascii_letters + string.digits
+    return "".join(random.choices(chars, k=length))
 
 
-def next_student_id(offset=0):
-    """IDs are YYYYMMDD plus a serial for that day, e.g. 2026090701."""
-    prefix = date.today().strftime("%Y%m%d")
-    used = set()
-    for (name,) in db.session.query(User.username).filter(User.username.like(f"{prefix}%")).all():
-        tail = name[len(prefix):]
-        if tail.isdigit():
-            used.add(int(tail))
-    serial = 1
-    skipped = 0
-    while True:
-        if serial not in used:
-            if skipped == offset:
-                return f"{prefix}{serial:02d}"
-            skipped += 1
-        serial += 1
+def next_student_id():
+    """Auto-incrementing 4-digit numeric username for students."""
+    last = (User.query.filter_by(role="STUDENT")
+            .order_by(User.id.desc()).first())
+    if not last:
+        return "1001"
+    try:
+        return str(int(last.username) + 1)
+    except ValueError:
+        return str(User.query.filter_by(role="STUDENT").count() + 1001)
 
 
 def unique_username(base):
-    candidate = base or "user"
+    base = base.lower().replace(" ", ".")[:20]
+    candidate = base
     n = 1
-    while db.session.query(User.id).filter_by(username=candidate).first():
-        n += 1
+    while User.query.filter_by(username=candidate).first():
         candidate = f"{base}{n}"
+        n += 1
     return candidate
 
 
-def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+# ─────────────────────────────────────────────── clash checking ──────────────
+
+def time_to_mins(t):
+    return t.hour * 60 + t.minute
 
 
-def log_action(action, detail=""):
-    from models import AuditLog
-    db.session.add(AuditLog(actor_id=current_user.id if current_user.is_authenticated else None,
-                            action=action, detail=detail[:500]))
+def minutes_to_time(mins):
+    from datetime import time as _time
+    return _time((mins // 60) % 24, mins % 60)
 
 
-# ------------------------------------------------------------- terms -------
-
-def current_term():
-    return Term.query.filter_by(is_current=True).first()
-
-
-def term_range(term_id=None, start=None, end=None):
-    """Resolve a date window from a term id or explicit dates.
-
-    Returns (start, end, label). Either bound may be None, meaning open-ended.
+def check_teacher_clash(teacher_id, check_date, start_time, end_time,
+                        exclude_schedule_id=None):
     """
-    if start or end:
-        return start, end, "Custom range"
-    if term_id:
-        term = db.session.get(Term, term_id)
-        if term:
-            return term.start_date, term.end_date, term.name
-    term = current_term()
-    if term:
-        return term.start_date, term.end_date, term.name
-    return None, None, "All time"
+    Returns dict: status ('green'|'amber'|'red'), message.
+    exclude_schedule_id: when editing an existing slot, skip itself.
+    """
+    s_mins = time_to_mins(start_time)
+    e_mins = time_to_mins(end_time)
 
+    q = ClassSchedule.query.filter(
+        ClassSchedule.teacher_id == teacher_id,
+        ClassSchedule.date == check_date,
+        ClassSchedule.status.notin_(["Cancelled"]),
+    )
+    if exclude_schedule_id:
+        q = q.filter(ClassSchedule.id != exclude_schedule_id)
+    existing = q.all()
+
+    # ── Hard clash (RED) ────────────────────────────────────────────────────
+    for cls in existing:
+        if cls.class_type == "Break":
+            continue
+        ex_s = time_to_mins(cls.start_time)
+        ex_e = time_to_mins(cls.end_time)
+        if s_mins < ex_e and e_mins > ex_s:
+            return {
+                "status": "red",
+                "message": (f"Double-booked: overlaps with "
+                            f'"{cls.task}" ({cls.start_str}–{cls.end_str})')
+            }
+
+    # ── Consecutive fatigue (AMBER) ─────────────────────────────────────────
+    from types import SimpleNamespace
+    day_slots = sorted(
+        [c for c in existing if c.class_type not in ("Break", "Other")],
+        key=lambda c: time_to_mins(c.start_time)
+    )
+    probe = SimpleNamespace(start_time=start_time, end_time=end_time)
+    all_slots = sorted(day_slots + [probe], key=lambda c: time_to_mins(c.start_time))
+
+    run = 1
+    for i in range(1, len(all_slots)):
+        gap = time_to_mins(all_slots[i].start_time) - time_to_mins(all_slots[i-1].end_time)
+        if gap < 30:
+            run += 1
+        else:
+            run = 1
+        if run >= 3:
+            return {
+                "status": "amber",
+                "message": f"Fatigue warning: {run} back-to-back classes with no 30-min break."
+            }
+
+    return {"status": "green", "message": "Fully available."}
+
+
+def check_student_clash(student_id, check_date, start_time, end_time,
+                        exclude_schedule_id=None):
+    """Returns True if student already has a class overlapping this slot."""
+    s_mins = time_to_mins(start_time)
+    e_mins = time_to_mins(end_time)
+    q = ClassSchedule.query.filter(
+        ClassSchedule.student_id == student_id,
+        ClassSchedule.date == check_date,
+        ClassSchedule.status.notin_(["Cancelled"]),
+    )
+    if exclude_schedule_id:
+        q = q.filter(ClassSchedule.id != exclude_schedule_id)
+    for cls in q.all():
+        if s_mins < time_to_mins(cls.end_time) and e_mins > time_to_mins(cls.start_time):
+            return True
+    return False
+
+
+def generate_slots(start_date, end_date, days_of_week,
+                   start_hour, end_hour, duration_mins, num_classes):
+    """
+    Generate (date, start_time, end_time) tuples.
+    days_of_week: list of ints 0=Mon…6=Sun.
+    """
+    from datetime import time
+    slots = []
+    current = start_date
+    s_mins = start_hour * 60
+    e_mins = end_hour * 60
+    if s_mins + duration_mins > e_mins:
+        e_mins = s_mins + duration_mins
+    while current <= end_date and len(slots) < num_classes:
+        if current.weekday() in days_of_week:
+            s = time(s_mins // 60, s_mins % 60)
+            e = time((s_mins + duration_mins) // 60, (s_mins + duration_mins) % 60)
+            slots.append((current, s, e))
+        current += timedelta(days=1)
+    return slots
+
+
+# ─────────────────────────────────────────────── attendance math ─────────────
 
 def window_from_request():
-    """Read term/from/to off the query string."""
-    term_id = request.args.get("term_id", type=int)
-    start = parse_date(request.args.get("from"), fallback=False) or None
-    end = parse_date(request.args.get("to"), fallback=False) or None
-    if request.args.get("term_id") == "all":
-        return None, None, "All time"
-    return term_range(term_id, start, end)
+    """Return (start, end, label) for the current filter window."""
+    tid = request.args.get("term_id")
+    if tid == "all":
+        return date(2000, 1, 1), date(2099, 12, 31), "All time"
+    if tid:
+        t = db.session.get(Term, int(tid))
+        if t:
+            return t.start_date, t.end_date, t.name
+    current = Term.query.filter_by(is_current=True).first()
+    if current:
+        return current.start_date, current.end_date, current.name
+    return date(2000, 1, 1), date(2099, 12, 31), "All time"
 
 
-# --------------------------------------------------------- attendance ------
-
-def attendance_query(student_id=None, course_id=None, start=None, end=None):
-    q = Attendance.query
-    if student_id:
-        q = q.filter(Attendance.student_id == student_id)
-    if course_id:
-        q = q.filter(Attendance.course_id == course_id)
-    if start:
-        q = q.filter(Attendance.date >= start)
-    if end:
-        q = q.filter(Attendance.date <= end)
-    return q
-
-
-def summarise(records):
+def attendance_summary(student_id, course_id, start, end):
+    records = Attendance.query.filter(
+        Attendance.student_id == student_id,
+        Attendance.course_id == course_id,
+        Attendance.date >= start,
+        Attendance.date <= end,
+    ).all()
     held = len(records)
-    present = sum(1 for r in records if r.status == "Present")
-    late = sum(1 for r in records if r.status == "Late")
-    absent = sum(1 for r in records if r.status == "Absent")
-    attended = present + late
-    return {"held": held, "present": present, "late": late, "absent": absent,
-            "attended": attended,
-            "percent": round(attended / held * 100, 1) if held else 0.0}
+    attended = sum(1 for r in records if r.status in ("Present", "Late"))
+    pct = round(attended / held * 100) if held else 0
+    return {"held": held, "attended": attended, "percent": pct}
 
 
-def attendance_summary(student_id, course_id=None, start=None, end=None):
-    return summarise(attendance_query(student_id, course_id, start, end).all())
-
-
-def bulk_attendance_summary(student_ids, start=None, end=None):
-    """One grouped query instead of one per student — matters at 300 students."""
+def bulk_attendance_summary(student_ids, start, end):
     if not student_ids:
         return {}
-    q = (db.session.query(Attendance.student_id, Attendance.status, func.count(Attendance.id))
-         .filter(Attendance.student_id.in_(student_ids)))
-    if start:
-        q = q.filter(Attendance.date >= start)
-    if end:
-        q = q.filter(Attendance.date <= end)
-    rows = q.group_by(Attendance.student_id, Attendance.status).all()
-
-    out = {sid: {"held": 0, "present": 0, "late": 0, "absent": 0,
-                 "attended": 0, "percent": 0.0} for sid in student_ids}
-    for sid, status, n in rows:
-        bucket = out[sid]
-        bucket["held"] += n
-        bucket[status.lower()] += n
-    for bucket in out.values():
-        bucket["attended"] = bucket["present"] + bucket["late"]
-        if bucket["held"]:
-            bucket["percent"] = round(bucket["attended"] / bucket["held"] * 100, 1)
+    rows = (db.session.query(
+                Attendance.student_id,
+                func.count(Attendance.id).label("held"),
+                func.sum(db.case((Attendance.status.in_(["Present", "Late"]), 1), else_=0))
+                    .label("attended"))
+            .filter(Attendance.student_id.in_(student_ids),
+                    Attendance.date >= start,
+                    Attendance.date <= end)
+            .group_by(Attendance.student_id).all())
+    out = {}
+    for r in rows:
+        pct = round(r.attended / r.held * 100) if r.held else 0
+        out[r.student_id] = {"held": r.held, "attended": r.attended, "percent": pct}
+    for sid in student_ids:
+        if sid not in out:
+            out[sid] = {"held": 0, "attended": 0, "percent": 0}
     return out
 
 
-def is_off_day(teacher_id, on_date):
-    return TeacherOffDay.query.filter_by(teacher_id=teacher_id, off_date=on_date).first()
-
-
-# ------------------------------------------------------------ rosters ------
-
-def courses_for_teacher(teacher_id, include_archived=False):
-    q = (Course.query.join(ClassAssignment, ClassAssignment.course_id == Course.id)
-         .filter(ClassAssignment.teacher_id == teacher_id))
-    if not include_archived:
-        q = q.filter(Course.is_archived.is_(False))
-    return q.distinct().order_by(Course.course_code).all()
-
-
-def courses_for_student(student_id):
-    return (Course.query.join(ClassAssignment, ClassAssignment.course_id == Course.id)
-            .filter(ClassAssignment.student_id == student_id,
-                    Course.is_archived.is_(False))
-            .distinct().order_by(Course.course_code).all())
-
-
-def roster(course_id, teacher_id=None):
-    q = (User.query.join(ClassAssignment, ClassAssignment.student_id == User.id)
-         .filter(ClassAssignment.course_id == course_id, User.status == "ACTIVE"))
-    if teacher_id:
-        q = q.filter(ClassAssignment.teacher_id == teacher_id)
-    return q.order_by(User.full_name).all()
-
-
-def student_search(q=None, branch=None, batch_id=None, course_id=None,
-                   status="ACTIVE", role="STUDENT"):
-    """Filtered user query used by the list pages and every export."""
-    sel = User.query.filter(User.role == role)
-    if status and status != "ALL":
-        sel = sel.filter(User.status == status)
-    if q:
-        like = f"%{q.strip()}%"
-        sel = sel.filter(or_(User.full_name.ilike(like), User.username.ilike(like),
-                             User.phone.ilike(like), User.email.ilike(like)))
-    if branch:
-        sel = sel.filter(User.branch == branch)
-    if batch_id:
-        sel = sel.filter(User.batch_id == batch_id)
+def average_mark(student_id, course_id=None):
+    q = (db.session.query(func.avg(Result.score))
+         .join(Assessment, Result.assessment_id == Assessment.id)
+         .filter(Result.student_id == student_id, Result.score.isnot(None)))
     if course_id:
-        sel = sel.join(ClassAssignment, ClassAssignment.student_id == User.id) \
-                 .filter(ClassAssignment.course_id == course_id)
-    return sel.order_by(User.full_name)
-
-
-# ---------------------------------------------------------- work / marks ---
-
-def open_work_for_student(student_id, limit=None):
-    """Published assessments in the student's courses, with their result row."""
-    course_ids = [c.id for c in courses_for_student(student_id)]
-    if not course_ids:
-        return []
-    items = (Assessment.query
-             .filter(Assessment.course_id.in_(course_ids), Assessment.is_published.is_(True))
-             .order_by(Assessment.due_date.is_(None), Assessment.due_date.asc(),
-                       Assessment.assigned_date.desc()).all())
-    results = {r.assessment_id: r for r in
-               Result.query.filter(Result.student_id == student_id).all()}
-    rows = [{"assessment": a, "result": results.get(a.id)} for a in items]
-    return rows[:limit] if limit else rows
-
-
-def average_percent(results):
-    marked = [r for r in results if r.score is not None and r.assessment.max_score]
-    if not marked:
+        q = q.filter(Assessment.course_id == course_id)
+    val = q.scalar()
+    if val is None:
         return None
-    total = sum(r.score / r.assessment.max_score for r in marked)
-    return round(total / len(marked) * 100, 1)
+    # as percent of max_score
+    mx = (db.session.query(func.avg(Assessment.max_score))
+          .join(Result, Result.assessment_id == Assessment.id)
+          .filter(Result.student_id == student_id, Result.score.isnot(None)))
+    if course_id:
+        mx = mx.filter(Assessment.course_id == course_id)
+    mx_val = mx.scalar() or 100
+    return round(val / mx_val * 100, 1) if mx_val else None
 
 
-# ----------------------------------------------------- announcements -------
-
-def _live(query):
-    """Drop anything past its expiry date."""
-    return query.filter(or_(Announcement.expires_on.is_(None),
-                            Announcement.expires_on >= date.today()))
-
-
-def announcements_for_student(student):
-    """Course notices for their courses, plus general ones aimed at them."""
-    course_ids = [c.id for c in courses_for_student(student.id)]
-
-    general = _live(Announcement.query.filter(
-        Announcement.course_id.is_(None),
-        Announcement.audience.in_(["STUDENTS", "EVERYONE"]),
-        or_(Announcement.branch.is_(None), Announcement.branch == student.branch),
-        or_(Announcement.batch_id.is_(None), Announcement.batch_id == student.batch_id)))
-
-    items = general.all()
-    if course_ids:
-        items += _live(Announcement.query.filter(
-            Announcement.course_id.in_(course_ids))).all()
-
-    items.sort(key=lambda a: (not a.is_urgent, -a.created_at.timestamp()))
-    return items
+def consecutive_absences(student_id):
+    """How many consecutive Absent records the student has most recently."""
+    records = (ScheduleAttendance.query
+               .filter_by(student_id=student_id)
+               .order_by(ScheduleAttendance.marked_at.desc())
+               .all())
+    streak = 0
+    for r in records:
+        if r.status == "Absent":
+            streak += 1
+        else:
+            break
+    return streak
 
 
-def announcements_for_teacher(teacher):
-    """General notices aimed at staff, plus the ones on their own courses."""
-    course_ids = [c.id for c in courses_for_teacher(teacher.id)]
+def students_at_risk(start, end):
+    """Students with attendance < 75% or 3+ consecutive absences."""
+    ids = [i for (i,) in db.session.query(User.id).filter_by(
+        role="STUDENT", status="ACTIVE").all()]
+    summaries = bulk_attendance_summary(ids, start, end)
+    at_risk = []
+    for sid, s in summaries.items():
+        consec = consecutive_absences(sid)
+        low_att = s["held"] > 0 and s["percent"] < 75
+        if low_att or consec >= 3:
+            at_risk.append({
+                "student": db.session.get(User, sid),
+                "percent": s["percent"],
+                "held": s["held"],
+                "consecutive": consec,
+                "low_att": low_att,
+            })
+    return sorted(at_risk, key=lambda x: x["percent"])
 
-    items = _live(Announcement.query.filter(
-        Announcement.course_id.is_(None),
-        Announcement.audience.in_(["TEACHERS", "EVERYONE"]),
-        or_(Announcement.branch.is_(None), Announcement.branch == teacher.branch))).all()
 
-    if course_ids:
-        items += _live(Announcement.query.filter(
-            Announcement.course_id.in_(course_ids))).all()
+# ─────────────────────────────────────────────── student search ──────────────
 
-    items.sort(key=lambda a: (not a.is_urgent, -a.created_at.timestamp()))
-    return items
+def student_search(q="", branch=None, batch_id=None, course_id=None,
+                   status="ACTIVE", role="STUDENT"):
+    query = User.query.filter_by(role=role)
+    if status != "ALL":
+        query = query.filter_by(status=status)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            User.full_name.ilike(like) |
+            User.username.ilike(like) |
+            User.phone.ilike(like) |
+            User.email.ilike(like)
+        )
+    if branch:
+        query = query.filter_by(branch=branch)
+    if batch_id:
+        query = query.filter_by(batch_id=batch_id)
+    if course_id:
+        enrolled_ids = [a.student_id for a in
+                        ClassAssignment.query.filter_by(course_id=course_id).all()]
+        query = query.filter(User.id.in_(enrolled_ids))
+    return query.order_by(User.full_name)
 
 
-# ----------------------------------------------------------- storage -------
+# ─────────────────────────────────────────────── pagination ──────────────────
+
+class Pagination:
+    def __init__(self, items, page, per_page, total):
+        self.items = items
+        self.page = page
+        self.per_page = per_page
+        self.total = total
+        self.pages = max(1, (total + per_page - 1) // per_page)
+        self.has_prev = page > 1
+        self.has_next = page < self.pages
+        self.prev_num = page - 1
+        self.next_num = page + 1
+
+    def iter_pages(self, edge=2, mid=2):
+        pages = []
+        for p in range(1, self.pages + 1):
+            if (p <= edge or p > self.pages - edge or
+                    abs(p - self.page) <= mid):
+                pages.append(p)
+            elif pages and pages[-1] is not None:
+                pages.append(None)
+        return pages
+
+
+def paginate(query, page=None, per_page=50):
+    page = page or 1
+    total = query.count()
+    items = query.offset((page - 1) * per_page).limit(per_page).all()
+    return Pagination(items, page, per_page, total)
+
+
+def page_args():
+    args = request.args.to_dict()
+    args.pop("page", None)
+    return args
+
+
+# ─────────────────────────────────────────────── announcements ───────────────
+
+def notices_for(user):
+    today = date.today()
+    q = Announcement.query.filter(
+        (Announcement.expires_on.is_(None)) | (Announcement.expires_on >= today)
+    )
+    if user.is_student:
+        q = q.filter(Announcement.audience.in_(["STUDENTS", "EVERYONE"]))
+        course_ids = [e.course_id for e in user.enrolments]
+        q = q.filter(
+            (Announcement.course_id.in_(course_ids)) |
+            (Announcement.course_id.is_(None))
+        )
+    elif user.is_teacher:
+        q = q.filter(Announcement.audience.in_(["TEACHERS", "EVERYONE"]))
+        my_course_ids = [a.course_id for a in user.teaching_assignments]
+        q = q.filter(
+            (Announcement.course_id.in_(my_course_ids)) |
+            (Announcement.course_id.is_(None))
+        )
+    return q.order_by(Announcement.is_urgent.desc(),
+                      Announcement.created_at.desc()).all()
+
+
+# ─────────────────────────────────────────────── audit log ───────────────────
+
+def log_action(action, detail=""):
+    entry = AuditLog(
+        actor_id=current_user.id if current_user.is_authenticated else None,
+        action=action,
+        detail=detail,
+    )
+    db.session.add(entry)
+
+
+# ─────────────────────────────────────────────── CSV builders ────────────────
+
+def csv_response(filename, headers, rows):
+    """Return a Flask Response streaming a CSV file."""
+    from flask import Response
+    def generate():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(headers)
+        for row in rows:
+            w.writerow(row)
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate()
+    return Response(
+        generate(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+def credentials_csv(people):
+    rows = [[p.username, p.full_name, p.role, p.initial_password or "(changed)"]
+            for p in people]
+    return csv_response("credentials.csv",
+                        ["Username", "Full Name", "Role", "Initial Password"],
+                        rows)
+
+
+def students_csv(people, summaries):
+    rows = []
+    for p in people:
+        s = summaries.get(p.id, {})
+        rows.append([
+            p.username, p.full_name, p.phone or "", p.email or "",
+            p.branch or "", p.batch.name if p.batch else "",
+            p.status, s.get("held", 0), s.get("attended", 0), s.get("percent", 0)
+        ])
+    return csv_response("students.csv",
+                        ["ID", "Name", "Phone", "Email", "Branch", "Batch",
+                         "Status", "Classes Held", "Attended", "Attendance %"],
+                        rows)
+
+
+def schedule_csv(schedules):
+    rows = []
+    for s in schedules:
+        rows.append([
+            s.date.strftime("%d-%b-%Y"),
+            s.date.strftime("%A"),
+            s.start_str,
+            s.end_str,
+            s.duration_mins,
+            s.teacher.full_name if s.teacher else "",
+            s.student.full_name if s.student else "",
+            s.task or "",
+            s.class_type,
+            s.venue or "",
+            s.status,
+        ])
+    return csv_response("schedule.csv",
+                        ["Date", "Day", "Start", "End", "Duration(mins)",
+                         "Teacher", "Student", "Task", "Type", "Venue", "Status"],
+                        rows)
+
+
+def attendance_grid_csv(course, students, dates):
+    headers = ["Student ID", "Name"] + [d.strftime("%d-%b") for d in dates]
+    rows = []
+    for s in students:
+        rec = {a.date: a.status for a in
+               Attendance.query.filter_by(student_id=s.id, course_id=course.id).all()}
+        rows.append([s.username, s.full_name] + [rec.get(d, "") for d in dates])
+    return csv_response(f"attendance_{course.course_code}.csv", headers, rows)
+
+
+def marksheet_csv(course, students, assessments):
+    headers = (["Student ID", "Name"] +
+               [f"{a.title} ({a.max_score})" for a in assessments])
+    rows = []
+    for s in students:
+        marks = {r.assessment_id: r.score for r in
+                 Result.query.filter_by(student_id=s.id).all()}
+        rows.append([s.username, s.full_name] +
+                    [marks.get(a.id, "") for a in assessments])
+    return csv_response(f"marks_{course.course_code}.csv", headers, rows)
+
+
+# ─────────────────────────────────────────────── storage ────────────────────
 
 def storage_usage():
-    """Bytes used by uploaded materials, and how that sits against the budget."""
-    folder = current_app.config["UPLOAD_FOLDER"]
-    total, files = 0, 0
-    for name in os.listdir(folder):
-        path = os.path.join(folder, name)
-        if os.path.isfile(path) and not name.startswith("."):
-            total += os.path.getsize(path)
-            files += 1
-    budget = current_app.config["STORAGE_BUDGET"]
-    hard = current_app.config["STORAGE_HARD_LIMIT"]
-    return {"bytes": total, "files": files, "mb": round(total / 1048576, 1),
-            "budget_mb": round(budget / 1048576), "hard_mb": round(hard / 1048576),
-            "percent": round(total / hard * 100, 1) if hard else 0,
-            "over_budget": total >= budget, "full": total >= hard}
+    import os
+    total = 0
+    upload_dir = "static/uploads"
+    if os.path.exists(upload_dir):
+        for f in os.listdir(upload_dir):
+            fp = os.path.join(upload_dir, f)
+            if os.path.isfile(fp):
+                total += os.path.getsize(fp)
+    return total
 
 
 def human_size(n):
-    if not n:
-        return "—"
-    for unit in ("B", "KB", "MB"):
-        if n < 1024 or unit == "MB":
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
         n /= 1024
+    return f"{n:.1f} TB"
 
 
-def paginate(query, page):
-    return query.paginate(page=page or 1, per_page=PER_PAGE, error_out=False)
+def parse_date(s):
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  SLOT RESOLUTION ENGINE
+#  When a preferred slot is blocked, work out what else would work.
+# ═══════════════════════════════════════════════════════════════════════════
+
+OPERATING_START_HOUR = 10      # centre opens
+OPERATING_END_HOUR   = 20      # centre closes
+SLOT_STEP_MINS       = 30      # granularity when hunting for a free time
+
+
+def active_teachers():
+    return (User.query.filter_by(role="TEACHER", status="ACTIVE")
+            .order_by(User.full_name).all())
+
+
+def slot_verdict(teacher_id, student_id, d, st, en, exclude_id=None):
+    """Combined teacher + student check for one slot. Student clash always wins."""
+    if student_id and check_student_clash(student_id, d, st, en, exclude_id):
+        return {"status": "red",
+                "message": "Student already has another class at this time."}
+    return check_teacher_clash(teacher_id, d, st, en, exclude_id)
+
+
+def free_teachers_at(d, st, en, student_id=None, pool=None):
+    """Teachers who are not double-booked for this slot, green first."""
+    if student_id and check_student_clash(student_id, d, st, en):
+        return []                      # student busy — no teacher can help
+    out = []
+    for t in (pool if pool is not None else active_teachers()):
+        if t is None or d.weekday() in t.off_days:
+            continue
+        span = t.hours_on(d)
+        if span and (st < span[0] or en > span[1]):
+            continue
+        c = check_teacher_clash(t.id, d, st, en)
+        if c["status"] != "red":
+            out.append({"teacher": t, "status": c["status"], "message": c["message"]})
+    out.sort(key=lambda x: 0 if x["status"] == "green" else 1)
+    return out
+
+
+def offset_label(mins):
+    """'1h earlier', '30 min later' etc."""
+    if mins == 0:
+        return "same time"
+    sign = "earlier" if mins < 0 else "later"
+    a = abs(mins)
+    if a % 60 == 0:
+        return f"{a // 60}h {sign}"
+    if a < 60:
+        return f"{a} min {sign}"
+    return f"{a // 60}h {a % 60}m {sign}"
+
+
+def alternative_times(d, requested_start, duration, student_id=None,
+                      pool=None, limit=4):
+    """
+    Nearest times on the SAME day that have at least one free teacher.
+    Returned closest-first so the smallest disruption is offered first.
+    """
+    req = time_to_mins(requested_start)
+    cands = []
+    m = OPERATING_START_HOUR * 60
+    while m + duration <= OPERATING_END_HOUR * 60:
+        if m != req:
+            st = minutes_to_time(m)
+            en = minutes_to_time(m + duration)
+            free = free_teachers_at(d, st, en, student_id, pool)
+            if free:
+                cands.append({
+                    "start": st, "end": en,
+                    "offset": m - req,
+                    "label": offset_label(m - req),
+                    "teachers": free,
+                    "status": free[0]["status"],
+                })
+        m += SLOT_STEP_MINS
+    cands.sort(key=lambda c: (abs(c["offset"]), 0 if c["status"] == "green" else 1))
+    return cands[:limit]
+
+
+def extension_slots(needed, after_date, days_of_week, start_hour, duration,
+                    student_id=None, preferred_teacher_id=None, max_days=180):
+    """
+    Find `needed` clean slots at the student's PREFERRED day+time, running on
+    past `after_date`. This is how we top a series back up to the full count
+    without asking the student to change anything.
+    """
+    if needed <= 0:
+        return []
+    pool = None
+    if preferred_teacher_id:
+        t = db.session.get(User, preferred_teacher_id)
+        pool = [t] if t else None
+    found = []
+    st_m  = start_hour * 60
+    d     = after_date + timedelta(days=1)
+    limit = after_date + timedelta(days=max_days)
+    while d <= limit and len(found) < needed:
+        if d.weekday() in days_of_week:
+            st = minutes_to_time(st_m)
+            en = minutes_to_time(st_m + duration)
+            free = free_teachers_at(d, st, en, student_id, pool)
+            if free:
+                found.append({"date": d, "start": st, "en": en, "end": en,
+                              "teacher": free[0]["teacher"],
+                              "status": free[0]["status"]})
+        d += timedelta(days=1)
+    return found
+
+
+def encode_booking(d, st, en, teacher_id):
+    """Compact instruction string so confirm needs no recomputation."""
+    return f"{d.isoformat()}|{st.strftime('%H:%M')}|{en.strftime('%H:%M')}|{teacher_id}"
+
+
+def decode_booking(s):
+    """Returns (date, start_time, end_time, teacher_id) or None for 'skip'."""
+    if not s or s == "skip":
+        return None
+    try:
+        ds, sts, ens, tid = s.split("|")
+        y, mo, dy = [int(x) for x in ds.split("-")]
+        sh, sm = [int(x) for x in sts.split(":")]
+        eh, em = [int(x) for x in ens.split(":")]
+        from datetime import time as _t
+        return date(y, mo, dy), _t(sh, sm), _t(eh, em), int(tid)
+    except (ValueError, AttributeError):
+        return None
+
+
+def build_plan(student_id, start_date, end_date, days_of_week, start_hour,
+               duration, num_classes, preferred_teacher_id=None):
+    """
+    The heart of the wizard. For every requested slot, decide its status and
+    — when blocked — gather the alternatives an admin can choose between.
+    """
+    pool = None
+    if preferred_teacher_id:
+        t = db.session.get(User, preferred_teacher_id)
+        pool = [t] if t else None
+
+    raw = generate_slots(start_date, end_date, days_of_week,
+                         start_hour, start_hour + 12, duration, num_classes)
+    plan = []
+    for idx, (d, st, en) in enumerate(raw):
+        free = free_teachers_at(d, st, en, student_id, pool)
+
+        if free:
+            # The preferred time works. Assign the best teacher available.
+            best = free[0]
+            others = free[1:]
+            for o in others:
+                o["value"] = encode_booking(d, st, en, o["teacher"].id)
+            row = {
+                "idx": idx, "date": d, "start": st, "end": en,
+                "status": best["status"],
+                "message": best["message"],
+                "teacher": best["teacher"],
+                "other_teachers": others,
+                "alt_times": [],
+                "default": encode_booking(d, st, en, best["teacher"].id),
+                "blocked_by_student": False,
+            }
+        else:
+            # Preferred time is blocked. Work out why, and what else fits.
+            student_busy = bool(student_id and
+                                check_student_clash(student_id, d, st, en))
+            if student_busy:
+                msg = "Student already has another class at this time."
+                same_time = []
+            elif preferred_teacher_id:
+                # The chosen teacher is busy — is anyone else free at this time?
+                same_time = free_teachers_at(d, st, en, student_id, None)
+                msg = ("Preferred teacher is booked."
+                       if same_time else "Every teacher is booked at this time.")
+            else:
+                same_time = []
+                msg = "Every teacher is booked at this time."
+
+            alts = alternative_times(d, st, duration, student_id, pool)
+            if not alts and pool:
+                # Widen the hunt: any teacher, any nearby time
+                alts = alternative_times(d, st, duration, student_id, None)
+
+            # Encode each alternative so the template just renders it
+            for o in same_time:
+                o["value"] = encode_booking(d, st, en, o["teacher"].id)
+            for a in alts:
+                a["value"] = encode_booking(d, a["start"], a["end"],
+                                            a["teachers"][0]["teacher"].id)
+
+            # Default: swap the teacher if we can (student keeps their time).
+            # Never silently move the student's time — make the admin choose.
+            default = (same_time[0]["value"] if same_time else "skip")
+
+            row = {
+                "idx": idx, "date": d, "start": st, "end": en,
+                "status": "red",
+                "message": msg,
+                "teacher": None,
+                "other_teachers": same_time,
+                "alt_times": alts,
+                "default": default,
+                "blocked_by_student": student_busy,
+            }
+        plan.append(row)
+    return plan
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  SCHEDULING ENGINE
+#  Working hours, protected blocks, the break rule, and suggestions.
+# ═══════════════════════════════════════════════════════════════════════════
+
+BREAK_AFTER      = 2      # this many back-to-back classes...
+BREAK_MINS       = 30     # ...then this long a break before the next one
+HORIZON_DAYS     = 180    # how far ahead an open-ended group is built
+STEP_MINS        = 15     # granularity when hunting for a free time
+DAY_NAMES        = ["Monday", "Tuesday", "Wednesday", "Thursday",
+                    "Friday", "Saturday", "Sunday"]
+
+
+def fmt(t):
+    return t.strftime("%I:%M %p").lstrip("0") if t else ""
+
+
+def mins(t):
+    return t.hour * 60 + t.minute
+
+
+def to_time(m):
+    from datetime import time as _t
+    return _t((m // 60) % 24, m % 60)
+
+
+def busy_on(teacher_id, d, exclude_id=None):
+    """Everything already occupying the teacher that day, earliest first."""
+    from models import ClassSchedule
+    q = ClassSchedule.query.filter(
+        ClassSchedule.teacher_id == teacher_id,
+        ClassSchedule.date == d,
+        ClassSchedule.status != "Cancelled",
+    )
+    if exclude_id:
+        q = q.filter(ClassSchedule.id != exclude_id)
+    return sorted(q.all(), key=lambda c: c.start_time)
+
+
+def blocks_on(teacher_id, d):
+    from models import TeacherBlock
+    return [b for b in TeacherBlock.query.filter_by(teacher_id=teacher_id).all()
+            if b.applies_on(d)]
+
+
+def needs_break_before(teacher_id, d, start_time, exclude_id=None):
+    """
+    Apply the break rule. Returns None when the slot is fine, or the earliest
+    minute it could start once the required break is honoured.
+    """
+    existing = [c for c in busy_on(teacher_id, d, exclude_id)
+                if c.class_type != "Break"]
+    if not existing:
+        return None
+
+    s = mins(start_time)
+    # Walk backwards from the proposed start, counting the run of classes
+    # that touch each other with no real gap.
+    run, cursor = 0, s
+    for c in sorted(existing, key=lambda x: mins(x.start_time), reverse=True):
+        end = mins(c.end_time)
+        if end <= cursor and cursor - end < BREAK_MINS:
+            run += 1
+            cursor = mins(c.start_time)
+        elif end <= cursor:
+            break
+    if run >= BREAK_AFTER:
+        last_end = max(mins(c.end_time) for c in existing
+                       if mins(c.end_time) <= s)
+        return last_end + BREAK_MINS
+    return None
+
+
+def check_slot(teacher_id, d, start_time, end_time, student_ids=None,
+               exclude_id=None):
+    """
+    The one place a proposed class is judged.
+    status: 'ok' | 'break' | 'clash'
+    """
+    t = db.session.get(User, teacher_id)
+    if not t:
+        return {"status": "clash", "reason": "teacher", "message": "No such teacher."}
+
+    wd, s, e = d.weekday(), mins(start_time), mins(end_time)
+
+    # 1. Does the teacher work that day?
+    if wd in t.off_days:
+        return {"status": "clash", "reason": "day-off",
+                "message": f"{t.full_name} does not work on {DAY_NAMES[wd]}."}
+
+    # 2. Inside their hours?
+    span = t.hours_on(d)
+    if span and (start_time < span[0] or end_time > span[1]):
+        return {"status": "clash", "reason": "hours",
+                "message": (f"{t.full_name} works {fmt(span[0])} to {fmt(span[1])} "
+                            f"on {DAY_NAMES[wd]}.")}
+
+    # 3. Protected time?
+    for b in blocks_on(teacher_id, d):
+        if s < mins(b.end_time) and e > mins(b.start_time):
+            return {"status": "clash", "reason": "block",
+                    "message": (f"{b.label} is kept clear "
+                                f"{fmt(b.start_time)} to {fmt(b.end_time)}.")}
+
+    # 4. Teacher already booked?
+    for c in busy_on(teacher_id, d, exclude_id):
+        if s < mins(c.end_time) and e > mins(c.start_time):
+            return {"status": "clash", "reason": "teacher-busy",
+                    "message": (f"{t.full_name} has {c.task or 'a class'} "
+                                f"{fmt(c.start_time)} to {fmt(c.end_time)}.")}
+
+    # 5. Any of the students already booked?
+    from models import ClassSchedule
+    for sid in (student_ids or []):
+        q = ClassSchedule.query.filter(
+            ClassSchedule.date == d,
+            ClassSchedule.status != "Cancelled",
+            ClassSchedule.student_id == sid)
+        if exclude_id:
+            q = q.filter(ClassSchedule.id != exclude_id)
+        for c in q.all():
+            if s < mins(c.end_time) and e > mins(c.start_time):
+                who = db.session.get(User, sid)
+                return {"status": "clash", "reason": "student-busy",
+                        "message": (f"{who.full_name if who else 'The student'} "
+                                    f"already has a class then.")}
+
+    # 6. The break rule
+    earliest = needs_break_before(teacher_id, d, start_time, exclude_id)
+    if earliest is not None and s < earliest:
+        return {"status": "break", "reason": "break",
+                "message": (f"{t.full_name} would have {BREAK_AFTER + 1} classes "
+                            f"in a row. Needs a {BREAK_MINS}-minute break first, "
+                            f"so the earliest is {fmt(to_time(earliest))}."),
+                "earliest": to_time(earliest)}
+
+    return {"status": "ok", "reason": "", "message": "Free."}
+
+
+def suggest_times(teacher_id, d, duration, student_ids=None, wanted=None,
+                  limit=4, exclude_id=None):
+    """
+    Times that genuinely work on that day, nearest to what was asked first.
+    This is what turns a refusal into a choice.
+    """
+    t = db.session.get(User, teacher_id)
+    if not t or d.weekday() in t.off_days:
+        return []
+    span = t.hours_on(d)
+    lo = mins(span[0]) if span else 10 * 60
+    hi = mins(span[1]) if span else 20 * 60
+
+    target = mins(wanted) if wanted else lo
+    out = []
+    m = lo
+    while m + duration <= hi:
+        st, en = to_time(m), to_time(m + duration)
+        if not (wanted and m == target):
+            v = check_slot(teacher_id, d, st, en, student_ids, exclude_id)
+            if v["status"] == "ok":
+                out.append({"start": st, "end": en, "offset": m - target,
+                            "label": gap_label(m - target)})
+        m += STEP_MINS
+    out.sort(key=lambda x: abs(x["offset"]))
+    return out[:limit]
+
+
+def gap_label(delta):
+    if delta == 0:
+        return "as asked"
+    way = "earlier" if delta < 0 else "later"
+    a = abs(delta)
+    if a < 60:
+        return f"{a} min {way}"
+    h, m = divmod(a, 60)
+    return f"{h}h {way}" if m == 0 else f"{h}h {m}m {way}"
+
+
+def free_teachers_for(d, start_time, end_time, student_ids=None, pool=None):
+    """Teachers who could take this exact slot."""
+    out = []
+    for t in (pool if pool is not None else active_teachers()):
+        v = check_slot(t.id, d, start_time, end_time, student_ids)
+        if v["status"] == "ok":
+            out.append({"teacher": t, "note": ""})
+        elif v["status"] == "break":
+            out.append({"teacher": t, "note": v["message"]})
+    return out
+
+
+# ── Building sessions from a group ─────────────────────────────────────────
+
+def clear_orphan_slot_links():
+    """
+    Null any slot_id that no longer points at a real slot. Harmless to run,
+    and keeps the database referentially clean after a timetable swap.
+    """
+    from models import ClassSchedule, ClassSlot
+    live = {s.id for s in ClassSlot.query.all()}
+    n = 0
+    for c in ClassSchedule.query.filter(ClassSchedule.slot_id.isnot(None)).all():
+        if c.slot_id not in live:
+            c.slot_id = None
+            n += 1
+    if n:
+        db.session.commit()
+    return n
+
+
+def generate_group(group, upto=None, commit=True):
+    """Create the missing sessions for every slot in the group."""
+    from models import ClassSchedule
+    today = date.today()
+    if upto is None:
+        upto = (group.end_date if group.end_date
+                else today + timedelta(days=HORIZON_DAYS))
+    if group.end_date and upto > group.end_date:
+        upto = group.end_date
+
+    start = group.start_date
+    if group.generated_to and group.generated_to >= start:
+        start = group.generated_to + timedelta(days=1)
+
+    sids = [m.student_id for m in group.members]
+    solo = sids[0] if group.kind == "1-on-1" and sids else None
+    have = {(s.date, s.start_time) for s in group.sessions.all()}
+    slots_by_day = {}
+    for sl in group.slots:
+        slots_by_day.setdefault(sl.weekday, []).append(sl)
+
+    made = clash = off = paused = 0
+    d = start
+    while d <= upto:
+        for sl in slots_by_day.get(d.weekday(), []):
+            if (d, sl.start_time) in have:
+                continue
+            if group.paused_on(d):
+                paused += 1
+                continue
+            v = check_slot(group.teacher_id, d, sl.start_time, sl.end_time, sids)
+            if v["status"] == "clash":
+                if v["reason"] in ("day-off", "hours", "block"):
+                    off += 1
+                else:
+                    clash += 1
+                continue
+            db.session.add(ClassSchedule(
+                date=d, start_time=sl.start_time, end_time=sl.end_time,
+                duration_mins=sl.duration_mins, task=group.name,
+                class_type=group.kind, venue=group.venue or "Centre",
+                teacher_id=group.teacher_id, student_id=solo,
+                course_id=group.course_id, group_id=group.id, slot_id=sl.id,
+                status="Scheduled"))
+            made += 1
+        d += timedelta(days=1)
+
+    group.generated_to = upto
+    if commit:
+        db.session.commit()
+    return {"made": made, "clash": clash, "off": off,
+            "paused": paused, "upto": upto}
+
+
+def top_up_groups(upto=None):
+    from models import ClassGroup
+    n = 0
+    for g in ClassGroup.query.filter_by(status="Active").all():
+        n += generate_group(g, upto, commit=False)["made"]
+    db.session.commit()
+    return n
+
+
+def pause_group(group, frm, to, note=""):
+    from models import ClassSchedule
+    q = group.sessions.filter(ClassSchedule.date >= frm,
+                              ClassSchedule.status == "Scheduled")
+    if to:
+        q = q.filter(ClassSchedule.date <= to)
+    n = 0
+    for s in q.all():
+        s.status = "Cancelled"
+        n += 1
+    group.status = "Paused"
+    group.pause_from, group.pause_to = frm, to
+    if note:
+        group.note = note
+    db.session.commit()
+    return n
+
+
+def resume_group(group):
+    from models import ClassSchedule
+    frm, to = group.pause_from, group.pause_to
+    group.status = "Active"
+    group.pause_from = group.pause_to = None
+    restored = 0
+    sids = [m.student_id for m in group.members]
+    if frm:
+        q = group.sessions.filter(ClassSchedule.date >= max(frm, date.today()),
+                                  ClassSchedule.status == "Cancelled")
+        if to:
+            q = q.filter(ClassSchedule.date <= to)
+        for s in q.all():
+            v = check_slot(s.teacher_id, s.date, s.start_time, s.end_time,
+                           sids, exclude_id=s.id)
+            if v["status"] != "clash":
+                s.status = "Scheduled"
+                restored += 1
+    db.session.commit()
+    res = generate_group(group)
+    return restored, res["made"]
+
+
+def stop_group(group, from_date=None, note=""):
+    from models import ClassSchedule
+    frm = from_date or date.today()
+    n = 0
+    for s in group.sessions.filter(ClassSchedule.date >= frm,
+                                   ClassSchedule.status == "Scheduled").all():
+        s.status = "Cancelled"
+        n += 1
+    group.status = "Stopped"
+    group.end_date = frm - timedelta(days=1)
+    if note:
+        group.note = note
+    db.session.commit()
+    return n
+
+
+def delete_group_range(group, frm, to=None):
+    from models import ClassSchedule
+    q = group.sessions.filter(ClassSchedule.date >= max(frm, date.today()))
+    if to:
+        q = q.filter(ClassSchedule.date <= to)
+    n = 0
+    for s in q.all():
+        db.session.delete(s)
+        n += 1
+    db.session.commit()
+    return n
+
+
+# ── Day timelines, free gaps, reminders ────────────────────────────────────
+
+def day_timeline(teacher_id, d):
+    """Classes and the gaps between them, so a day can be read at a glance."""
+    t = db.session.get(User, teacher_id)
+    if not t or d.weekday() in t.off_days:
+        return {"working": False, "items": [], "warnings": []}
+
+    span = t.hours_on(d)
+    lo = mins(span[0]) if span else 10 * 60
+    hi = mins(span[1]) if span else 20 * 60
+
+    events = []
+    for c in busy_on(teacher_id, d):
+        events.append({"type": "class", "start": c.start_time,
+                       "end": c.end_time, "obj": c})
+    for b in blocks_on(teacher_id, d):
+        events.append({"type": "block", "start": b.start_time,
+                       "end": b.end_time, "obj": b})
+    events.sort(key=lambda x: mins(x["start"]))
+
+    items, cursor, run = [], lo, 0
+    for ev in events:
+        s, e = mins(ev["start"]), mins(ev["end"])
+        if s > cursor:
+            items.append({"type": "free", "start": to_time(cursor),
+                          "end": to_time(s), "mins": s - cursor})
+        if ev["type"] == "class":
+            gap_before = s - cursor if items and items[-1]["type"] != "free" else None
+            run = run + 1 if (cursor == s and items) else 1
+        items.append(ev)
+        cursor = max(cursor, e)
+    if cursor < hi:
+        items.append({"type": "free", "start": to_time(cursor),
+                      "end": to_time(hi), "mins": hi - cursor})
+
+    # Flag a run of classes with no real break between them
+    warnings, streak, streak_from = [], 0, None
+    prev_end = None
+    for it in items:
+        if it["type"] == "class":
+            if prev_end is not None and mins(it["start"]) - prev_end < BREAK_MINS:
+                streak += 1
+            else:
+                streak = 1
+                streak_from = it["start"]
+            if streak > BREAK_AFTER:
+                warnings.append(
+                    f"{streak} classes back to back from {fmt(streak_from)} "
+                    f"with no {BREAK_MINS}-minute break.")
+            prev_end = mins(it["end"])
+        elif it["type"] in ("free", "block") and it.get("mins", BREAK_MINS) >= BREAK_MINS:
+            streak = 0
+            prev_end = None
+
+    teaching = [i for i in items if i["type"] == "class"]
+    return {
+        "working": True,
+        "items": items,
+        "warnings": list(dict.fromkeys(warnings)),
+        "classes": len(teaching),
+        "hours": round(sum((i["obj"].duration_mins or 0) for i in teaching) / 60, 1),
+        "free_mins": sum(i["mins"] for i in items if i["type"] == "free"),
+        "window": (to_time(lo), to_time(hi)),
+    }
+
+
+def free_slots_today(d=None, min_mins=60, limit=40):
+    """Open gaps across every active teacher — the dashboard's 'what's free'."""
+    d = d or date.today()
+    out = []
+    for t in active_teachers():
+        tl = day_timeline(t.id, d)
+        if not tl["working"]:
+            continue
+        for it in tl["items"]:
+            if it["type"] == "free" and it["mins"] >= min_mins:
+                out.append({"teacher": t, "start": it["start"],
+                            "end": it["end"], "mins": it["mins"], "date": d})
+    out.sort(key=lambda x: (mins(x["start"]), x["teacher"].full_name))
+    return out[:limit]
+
+
+def outstanding_for(teacher_id, days_back=7):
+    """
+    Classes that have finished but have no attendance or no lesson log.
+    This drives the reminders.
+    """
+    from models import ClassSchedule, LessonLog, ScheduleAttendance
+    now = datetime.now()
+    today = now.date()
+    since = today - timedelta(days=days_back)
+    rows = (ClassSchedule.query
+            .filter(ClassSchedule.teacher_id == teacher_id,
+                    ClassSchedule.date >= since,
+                    ClassSchedule.date <= today,
+                    ClassSchedule.status == "Scheduled",
+                    ClassSchedule.class_type != "Break")
+            .order_by(ClassSchedule.date.desc(),
+                      ClassSchedule.start_time.desc()).all())
+    out = []
+    for c in rows:
+        finished = datetime.combine(c.date, c.end_time)
+        if finished > now:
+            continue
+        att = ScheduleAttendance.query.filter_by(schedule_id=c.id).count()
+        log = 0
+        if c.course_id:
+            log = LessonLog.query.filter_by(course_id=c.course_id,
+                                            class_date=c.date).count()
+        if att == 0 or log == 0:
+            hrs = (now - finished).total_seconds() / 3600
+            out.append({"cls": c, "no_attendance": att == 0,
+                        "no_log": log == 0, "hours_ago": round(hrs, 1)})
+    return out
+
+
+def next_dates(weekday, start, count=8, end=None):
+    """The next `count` dates falling on that weekday."""
+    out = []
+    d = max(start, date.today())
+    while len(out) < count:
+        if end and d > end:
+            break
+        if d.weekday() == weekday:
+            out.append(d)
+        d += timedelta(days=1)
+        if (d - start).days > 400:
+            break
+    return out
+
+
+def analyse_slot(teacher_id, weekday, st, en, student_ids, start, end=None,
+                 occurrences=8):
+    """
+    Judge one weekly slot over its next few dates, so problems are caught
+    before anything is created rather than silently skipped afterwards.
+    """
+    dates = next_dates(weekday, start, occurrences, end)
+    if not dates:
+        return {"ok": 0, "total": 0, "clean": True, "message": "", "dates": []}
+    verdicts = [(d, check_slot(teacher_id, d, st, en, student_ids)) for d in dates]
+    good = [d for d, v in verdicts if v["status"] == "ok"]
+    bad  = [(d, v) for d, v in verdicts if v["status"] != "ok"]
+    return {
+        "ok": len(good),
+        "total": len(dates),
+        "clean": not bad,
+        "message": bad[0][1]["message"] if bad else "",
+        "status": bad[0][1]["status"] if bad else "ok",
+        "bad_dates": [d for d, _ in bad],
+        "sample": bad[0][0] if bad else dates[0],
+        "dates": dates,
+    }
+
+
+def slot_options(teacher_id, sample_date, st, en, student_ids, pool=None):
+    """
+    What else would work for this slot: other times with the same teacher,
+    and other teachers at the same time.
+    """
+    dur = mins(en) - mins(st)
+    times = suggest_times(teacher_id, sample_date, dur, student_ids,
+                          wanted=st, limit=4)
+    others = []
+    for t in (pool if pool is not None else active_teachers()):
+        if t.id == teacher_id:
+            continue
+        v = check_slot(t.id, sample_date, st, en, student_ids)
+        if v["status"] == "ok":
+            others.append({"teacher": t, "note": ""})
+        elif v["status"] == "break":
+            others.append({"teacher": t, "note": "needs a break first"})
+    return {"times": times, "teachers": others[:5]}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  ROUTINE SERVICES
+#  One function per report, used by both the screen and the PDF, so the two
+#  can never disagree.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_student_schedule(student_id, from_date, to_date, include_cancelled=False):
+    """
+    The classes a student actually attends.
+
+    Authoritative path:
+        Student -> GroupStudent -> ClassGroup -> ClassSchedule
+    plus any genuinely student-specific occurrence (ClassSchedule.student_id).
+
+    Course enrolment is deliberately NOT used. Being enrolled in GED Social
+    Studies means the student studies the subject; it does not mean they sit
+    in every other student's one-to-one under it.
+    """
+    from models import ClassSchedule, GroupStudent
+
+    group_ids = [g.group_id for g in
+                 GroupStudent.query.filter_by(student_id=student_id).all()]
+
+    conds = [ClassSchedule.student_id == student_id]
+    if group_ids:
+        conds.append(ClassSchedule.group_id.in_(group_ids))
+
+    q = (ClassSchedule.query
+         .filter(ClassSchedule.date >= from_date,
+                 ClassSchedule.date <= to_date)
+         .filter(db.or_(*conds)))
+    if not include_cancelled:
+        q = q.filter(ClassSchedule.status != "Cancelled")
+
+    rows = q.order_by(ClassSchedule.date, ClassSchedule.start_time).all()
+
+    # A student can qualify through both paths; show the class once.
+    seen, out = set(), []
+    for r in rows:
+        if r.id in seen:
+            continue
+        seen.add(r.id)
+        out.append(r)
+    return out
+
+
+def get_daily_schedule(on_date, teacher_id=None, include_cancelled=True):
+    """Every class on one date, earliest first — the room-assignment page."""
+    from models import ClassSchedule
+    q = ClassSchedule.query.filter(ClassSchedule.date == on_date,
+                                   ClassSchedule.class_type != "Break")
+    if teacher_id:
+        q = q.filter(ClassSchedule.teacher_id == teacher_id)
+    if not include_cancelled:
+        q = q.filter(ClassSchedule.status != "Cancelled")
+    return q.order_by(ClassSchedule.start_time, ClassSchedule.end_time).all()
+
+
+def get_teacher_schedule(teacher_id, from_date, to_date, include_cancelled=True):
+    from models import ClassSchedule
+    q = (ClassSchedule.query
+         .filter(ClassSchedule.teacher_id == teacher_id,
+                 ClassSchedule.date >= from_date,
+                 ClassSchedule.date <= to_date))
+    if not include_cancelled:
+        q = q.filter(ClassSchedule.status != "Cancelled")
+    return q.order_by(ClassSchedule.date, ClassSchedule.start_time).all()
+
+
+def update_schedule_rooms(mapping):
+    """
+    Save typed rooms against dated occurrences. Touches the room field only —
+    never the teacher, students, group, course, date, time or pattern, and
+    never a future date.
+    """
+    from models import ClassSchedule
+    changed = 0
+    for sid, room in mapping.items():
+        cls = db.session.get(ClassSchedule, int(sid))
+        if not cls:
+            continue
+        new = (room or "").strip()[:100] or None
+        if new != cls.room:
+            cls.room = new
+            changed += 1
+    if changed:
+        db.session.commit()
+    return changed
+
+
+def unlinked_schedules(limit=200):
+    """
+    Occurrences with no group and no student — they cannot appear on anybody's
+    routine, so they need repairing rather than papering over.
+    """
+    from models import ClassSchedule
+    return (ClassSchedule.query
+            .filter(ClassSchedule.group_id.is_(None),
+                    ClassSchedule.student_id.is_(None),
+                    ClassSchedule.class_type != "Break")
+            .order_by(ClassSchedule.date).limit(limit).all())
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FILE UPLOADS — assignment briefs and student submissions
+# ═══════════════════════════════════════════════════════════════════════════
+
+ALLOWED_DOCS  = {"doc", "docx", "pdf", "ppt", "pptx", "xls", "xlsx", "txt", "rtf"}
+ALLOWED_IMGS  = {"jpg", "jpeg", "png", "gif", "webp"}
+ALLOWED_UPLOAD = ALLOWED_DOCS | ALLOWED_IMGS
+BLOCKED_EXT   = {"exe", "bat", "cmd", "com", "sh", "bash", "ps1", "js", "jar",
+                 "msi", "vbs", "scr", "dll", "so", "py", "php", "html", "htm",
+                 "svg", "apk", "app", "deb", "rpm"}
+MAX_UPLOAD_MB = 15
+
+
+def upload_root():
+    """Uploads live outside the template/static tree."""
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def ext_of(filename):
+    return (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+
+
+def check_upload(storage):
+    """Validate before writing anything. Returns (ok, message, extension)."""
+    if not storage or not storage.filename:
+        return False, "No file chosen.", ""
+    ext = ext_of(storage.filename)
+    if not ext:
+        return False, "That file has no extension.", ""
+    if ext in BLOCKED_EXT:
+        return False, f".{ext} files are not allowed.", ext
+    if ext not in ALLOWED_UPLOAD:
+        return False, (f".{ext} is not a permitted type. Allowed: "
+                       f"{', '.join(sorted(ALLOWED_UPLOAD))}."), ext
+
+    storage.stream.seek(0, os.SEEK_END)
+    size = storage.stream.tell()
+    storage.stream.seek(0)
+    if size == 0:
+        return False, "That file is empty.", ext
+    if size > MAX_UPLOAD_MB * 1024 * 1024:
+        return False, (f"That file is {size / 1024 / 1024:.1f} MB. "
+                       f"The limit is {MAX_UPLOAD_MB} MB."), ext
+    return True, "", ext
+
+
+def save_upload(storage, folder):
+    """
+    Write the file under a random key, never the user's own filename.
+    Returns (display_name, storage_key, mime, size).
+    """
+    import uuid
+    from werkzeug.utils import secure_filename
+
+    ok, msg, ext = check_upload(storage)
+    if not ok:
+        raise ValueError(msg)
+
+    safe = secure_filename(storage.filename) or f"file.{ext}"
+    key = f"{folder}/{uuid.uuid4().hex}.{ext}"
+    dest = os.path.join(upload_root(), key)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    storage.save(dest)
+    return safe[:255], key, (storage.mimetype or "")[:120], os.path.getsize(dest)
+
+
+def upload_path(key):
+    """Resolve a stored key, refusing anything that escapes the folder."""
+    if not key:
+        return None
+    root = os.path.realpath(upload_root())
+    full = os.path.realpath(os.path.join(root, key))
+    if not full.startswith(root + os.sep):
+        return None
+    return full if os.path.isfile(full) else None
+
+
+def delete_upload(key):
+    p = upload_path(key)
+    if p:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def stranded_students():
+    """
+    Students enrolled on a subject but attached to no class. Their routine
+    will be empty until they are put in one. Where the subject has exactly
+    one class, the repair is unambiguous and can be offered as one click.
+    """
+    from models import ClassAssignment, ClassGroup, GroupStudent, User
+    out = []
+    for s in (User.query.filter_by(role="STUDENT", status="ACTIVE")
+              .order_by(User.full_name).all()):
+        if GroupStudent.query.filter_by(student_id=s.id).count():
+            continue
+        courses, suggestions = [], []
+        for a in ClassAssignment.query.filter_by(student_id=s.id).all():
+            if not a.course:
+                continue
+            courses.append(a.course)
+            groups = (ClassGroup.query
+                      .filter_by(course_id=a.course_id, status="Active")
+                      .order_by(ClassGroup.id).all())
+            batches = [g for g in groups if g.kind == "Batch"]
+            if len(batches) == 1:
+                suggestions.append(batches[0])
+            elif len(groups) == 1:
+                suggestions.append(groups[0])
+        out.append({"student": s, "courses": courses,
+                    "suggest": suggestions,
+                    "certain": len(suggestions) == len(courses) and bool(suggestions)})
+    return out
+
+
+def student_courses(student_id, include_archived=False):
+    """
+    The subjects a student actually studies.
+
+    Union of two paths, because either is a legitimate way in:
+        * class membership   Student -> GroupStudent -> ClassGroup -> Course
+        * direct enrolment   Student -> ClassAssignment -> Course
+
+    Membership alone is enough. Being in the GED RLA batch means the student
+    studies GED RLA, whether or not anybody also created an enrolment row.
+    """
+    from models import ClassAssignment, Course, GroupStudent
+
+    ids = set()
+    for gs in GroupStudent.query.filter_by(student_id=student_id).all():
+        if gs.group and gs.group.course_id:
+            ids.add(gs.group.course_id)
+    for a in ClassAssignment.query.filter_by(student_id=student_id).all():
+        if a.course_id:
+            ids.add(a.course_id)
+    if not ids:
+        return []
+    q = Course.query.filter(Course.id.in_(ids))
+    if not include_archived:
+        q = q.filter_by(is_archived=False)
+    return q.order_by(Course.course_code).all()
+
+
+def student_classes(student_id):
+    """The class groups a student belongs to, batch and one-to-one alike."""
+    from models import GroupStudent
+    out = [gs.group for gs in
+           GroupStudent.query.filter_by(student_id=student_id).all() if gs.group]
+    return sorted(out, key=lambda g: (g.kind, g.name))

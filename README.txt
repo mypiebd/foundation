@@ -1,171 +1,304 @@
-================================================================================
-PIE PATHWAYS — LMS (version 2)
-Flask 3 + SQLite + Bootstrap 5, branded to the INTO PIE site, sized for a few
-hundred students on a PythonAnywhere free account.
-================================================================================
-
-WHAT CHANGED SINCE VERSION 1
-----------------------------
-- Search and filters on every list: name, ID, phone, email, branch, batch,
-  course, active/archived, and an attendance threshold. Pages of 50.
-- Student profile page — one screen showing how a student is faring, and a
-  downloadable PDF report card.
-- CSV exports everywhere: student list, login credentials, attendance grid
-  (students x dates), mark sheet (students x assessments).
-- Bulk add: paste a list of names, get IDs and passwords for all of them, and
-  enrol the whole group into courses in one action.
-- Archive (default) and permanent delete (typed confirmation) for people.
-- Assignments and practice work: teachers set it, students see it on their
-  dashboard with due dates and hand in a link, teachers mark it.
-- Batches (intakes) and terms. Attendance percentages default to the current
-  term instead of all time.
-- Branch and phone number on every person.
-- Teacher navigation is course-first: one page per course with tabs.
-- Storage meter with automatic upload cut-off, so the free account never fills.
-- The schedule feature was dropped.
-
-VERSION 3 ADDS
---------------
-- Notices. Admins post general announcements (to students, teachers or everyone,
-  optionally targeted at one branch or batch). Teachers post course notices from
-  inside their own course. Urgent ones show in red at the top. Set a take-down
-  date and they clear themselves.
-- Duplicate students are refused at creation and skipped in bulk add, existing
-  duplicates are flagged, and two records can be merged into one.
-
-UPGRADING FROM VERSION 2: nothing to do. Notices are a new table, added
-automatically on the next reload. Do NOT delete lms.db — your data is kept.
-
-UPGRADING FROM VERSION 1: delete lms.db first. The v1 schema is incompatible
-and there is no migration; v1 was test data.
+PIE SCHEDULER
+=============
+Scheduling, attendance and records for PIE International Education.
 
 
-WHAT IS IN THE BOX
-------------------
-app.py              Configuration, authentication, seeding, error handling
-models.py           Database tables
-helpers.py          Shared queries, permissions, attendance maths
-views_admin.py      Administrator pages
-views_teacher.py    Teacher pages
-views_student.py    Student pages
-exports.py          CSV builders and the PDF report card
-wsgi.py             PythonAnywhere entry point
-requirements.txt    Dependencies
-templates/          Jinja templates, grouped by role
-static/css/         Brand stylesheet
-static/js/          Select-all, bulk register marking, unsaved-work warning
-static/uploads/     Uploaded course materials
+UPGRADING AN EXISTING DATABASE
+------------------------------
+If you already have a pie.db with your students and classes in it, copy it
+into this folder and run:
+
+    python migrate.py --dry-run     see what would change
+    python migrate.py               do it
+
+It backs up pie.db with a timestamp first, adds the new columns, creates the
+records-viewer account, and links historical schedule rows to their class
+where the match is certain. Nothing is deleted and no class has its date,
+time or teacher changed. Safe to run twice.
 
 
-BRAND COLOURS
--------------
-Navy   #07091C   navigation, headers, footers
-Red    #E2001A   primary buttons, active tab, brand accents
-Amber  #B45309   warnings (kept distinct from red so red stays a brand colour)
-Grey   #DFE2E8   rules and borders
-Page   #F7F7F8   background
+SUBJECTS, CLASSES AND DESCRIPTIONS
+----------------------------------
+There are only two things now:
+
+    SUBJECT  - IELTS, GED Social Studies, IQ Physics. One per thing taught.
+    CLASS    - a group of days and times under a subject, with a teacher
+               and its students. Batch or one-to-one.
+
+The old "Batches & terms" intake list is gone. It held nothing, did nothing,
+and confused the two ideas above. Terms moved to People > Terms, where they
+belong - a term is only the window attendance percentages are measured over.
+
+EDITING A SUBJECT
+Classes > Subjects > open one > Edit subject. You can change the code, the
+name, and write the description. Renaming is safe: attendance, marks and
+routines follow the subject itself, not its name. Changing the CODE changes
+what prints on every routine and register, so the form warns you.
+
+The description page also holds, all optional: module code, awarding body,
+level, credits, learning hours, how it is assessed (one line each) and what
+students will learn (one line each).
+
+WHO SEES IT
+All three. Admin sees it on the subject page, teachers above their course
+tabs, students on their own subject page. Students see the first six topics
+with a button to show the rest.
+
+The eighteen subjects already have descriptions written in - the INTO module
+specifications for the IQ modules, and the published test formats for IELTS,
+GED and SAT. Edit any of them freely.
+
+TAKING A SUBJECT TWO WAYS
+A student can be in the batch AND have a one-to-one in the same subject.
+Nothing stops it and the clash checker handles it, because it looks at the
+student's whole diary. The subject page lists every class under it so you can
+see which is which, and a student's routine shows both.
 
 
-DEFAULT ACCOUNTS
+CHANGING A CLASS TEACHER
+------------------------
+Classes > open one > Days and times > change the teacher > Save.
+
+The new teacher is checked against every day first. If any of them will not
+fit, NOTHING IS CHANGED - you get a screen headed "That change would leave
+gaps", listing the problem days with what would work instead:
+
+  * keep the time and give that day to a teacher who is free
+  * move the time on the same day
+  * leave that day out
+  * use it anyway, where only some dates clash
+
+The existing timetable stays booked until you confirm. Before this check
+existed, moving a class to a teacher who was busy deleted every session and
+rebuilt none.
+
+
+WHO A ROUTINE BELONGS TO
+------------------------
+A student's routine comes from the classes they are actually in:
+
+    Student -> class membership -> the dated class
+
+Course enrolment is deliberately NOT used. Being enrolled in GED Social
+Studies means the student studies the subject; it does not mean they sit in
+every other student's one-to-one under it. Before this change, one student's
+private session could appear on another student's sheet.
+
+The consequence: a student enrolled on a subject but not put into a class has
+an empty routine. That is a gap in the data, not something to paper over, so
+CLASSES > DATA CHECK lists them. Where the subject has exactly one class the
+repair is unambiguous, and one button attaches them all.
+
+
+DAILY ROUTINE AND ROOMS
+-----------------------
+Classes > Daily routine & rooms.
+
+    Pick the date -> see that day's classes -> type the room -> Save rooms
+
+Type anything operational: Room 1, Lab, Conference Room. Enter jumps to the
+next box. Values are saved against that date only - tomorrow is untouched,
+and nothing else about the class changes. Online classes show ONLINE.
+
+Daily PDF prints the day with rooms for the front desk. The same room then
+appears on student and teacher routines automatically.
+
+
+STUDENT RECORDS VIEWER
+----------------------
+A fourth account type for the front desk, counselling and management.
+
+    studentviewer / pie@viewer2026
+
+Search by name, student ID or phone, then view profile, classes, attendance,
+marks, assignment status and routine. It cannot change anything - not by
+button, not by typing an edit address, not by a crafted request. Write verbs
+are refused before the page is even reached. Submitted files are not
+downloadable from this account.
+
+
+ASSIGNMENTS WITH FILES
+----------------------
+Teachers attach the paper itself, not only a link. Word, PDF or an image, up
+to 15 MB. Script and executable files are refused.
+
+Students open the assignment, download the brief, and upload their work -
+file, link, or both, with an optional note.
+
+The hand-in has four states the student can see:
+
+    Not Submitted -> Submitted -> Received -> Marked
+
+SUBMITTED means it reached the system. RECEIVED means the teacher has
+confirmed they have it. A teacher cannot enter a mark until they have
+confirmed receipt, so a student is never left wondering whether the work
+arrived. Sending work again clears the receipt, since it is new work.
+
+Teachers see everything on Course > Work set > Submissions: who has handed
+in, the file to download, a Mark received button, then the mark box.
+
+Files are stored under random names outside the source folder and served
+only through a route that checks permission. A student can reach their own
+submission and nobody else's.
+
+
+RUN IT (Windows)
 ----------------
-Admin      admin      / admin123
-Teacher    teacher1   / teacher123
-Student    1001       / student123
-Student    1002       / student123
+Open the folder that contains app.py. Click the address bar, type cmd, Enter.
 
-Change the admin password immediately, then archive the three demo accounts
-once you have finished testing.
-
-
-RUN IT LOCALLY FIRST
---------------------
     python -m venv venv
-    venv\Scripts\activate            (PowerShell on Windows)
-    source venv/bin/activate         (macOS / Linux)
+    venv\Scripts\activate
     pip install -r requirements.txt
     python app.py
 
-Open http://127.0.0.1:5000
+Open http://127.0.0.1:5000   Sign in: admin / pie@admin2026
+
+The system starts empty. You add everything yourself.
 
 
-DEPLOY ON PYTHONANYWHERE (FREE TIER)
-------------------------------------
-1. Delete the old lms_project folder and lms.db if you deployed version 1.
+THE FIRST HOUR
+--------------
+The dashboard shows a checklist. In order:
 
-2. Upload lms_project.zip through Files, into /home/PIEPathways/
+1  TEACHERS. Add each one and set their working days and hours. Tick the days
+   they work, set from and to, use "Apply to every ticked day" to fill the rest.
+   Nothing can ever be booked outside those hours.
 
-3. In a Bash console:
+   Protected time: on a teacher's edit screen add blocks such as Friday prayer
+   1:00-2:00 PM. Nothing can be booked over them.
 
-       cd ~
-       unzip lms_project.zip
-       cd lms_project
+2  SUBJECTS. One per subject - IELTS, GED Social Studies, SAT Math. Not one per
+   batch. The same subject can be taught as a batch AND one-to-one underneath.
 
-4. Install dependencies (use the same Python version as the web app):
+3  STUDENTS. Add one at a time, or paste a whole intake with Add many.
+   Download Logins CSV to hand out IDs and passwords.
 
-       pip3.10 install --user -r requirements.txt
-
-   reportlab is only needed for the PDF report card. If it will not install,
-   the app still runs — the report button falls back to a print-ready page.
-
-5. Web tab → Add a new web app → Manual configuration → same Python version.
-
-6. Set on the Web tab:
-       Source code:       /home/PIEPathways/lms_project
-       Working directory: /home/PIEPathways/lms_project
-
-7. Open the WSGI configuration file, delete everything, paste:
-
-       import os, sys
-       path = '/home/PIEPathways/lms_project'
-       if path not in sys.path:
-           sys.path.insert(0, path)
-       os.environ['LMS_SECRET_KEY'] = 'put-a-long-random-string-here'
-       from app import app as application
-
-8. Add a static files mapping:
-       URL:       /static/
-       Directory: /home/PIEPathways/lms_project/static/
-
-9. Reload, then open https://PIEPathways.pythonanywhere.com
-
-   Upgrading from version 2? Skip the lms.db deletion in step 1 — just unzip
-   over the folder and reload. The notices table is created for you.
-
-Almost every first-deploy failure is a Python version mismatch between steps 4
-and 5. The error log is linked at the top of the Web tab.
+4  CLASSES. Set up a class: pick the subject, batch or one-to-one, the teacher,
+   then add a row for each day with its own time. Saturday 10:00 and Tuesday
+   2:00 in the same class is fine. Tick who attends. Leave it running until
+   you stop it.
 
 
-SETUP ORDER FOR A NEW TERM
---------------------------
-1. Batches & terms  — create the term (make it current) and the intake batch.
-2. Teachers         — add staff; usernames are built from their names.
-3. Students         — "Add many", paste the intake list, set branch and batch.
-4. Logins CSV       — download and hand out.
-5. Courses          — create each course, then open it and enrol the batch
-                      in one click, choosing the teacher who runs it.
+HOW SUBJECTS AND CLASSES FIT TOGETHER
+-------------------------------------
+    SUBJECT: GED Social Studies
+      |
+      |-- "GED SS Morning Batch"  Batch    Sumaya   12 students
+      |      Sat 12:00-1:30 PM, Tue 4:00-5:30 PM
+      |
+      |-- "Orin - GED SS"         1-on-1   Sazid     1 student
+             Sun 10:00-11:00 AM
 
-After that, teachers work entirely from My courses.
-
-
-STORAGE ON THE FREE TIER
-------------------------
-- Student submissions are always links (Google Drive, Docs). Nothing is stored.
-- Teacher materials may be uploaded, 5 MB per file.
-- The Storage page shows usage. Amber past 250 MB; uploads are refused at
-  350 MB with a message telling teachers to use links instead.
-- Delete old files from the Storage page at the end of each term.
-
-If you need more, the PythonAnywhere $5/month tier gives 1 GB and a custom
-domain. Nothing in the code needs to change.
+One subject. Different ways of teaching it. Registers, marks and lesson notes
+all roll up to the subject, so a student doing both sees one record.
 
 
-BACKUPS AND MAINTENANCE
------------------------
-- Everything is in lms.db next to app.py. Download it from the Files tab
-  weekly, and always before uploading a new version.
-- Uploaded materials live in static/uploads/ and are not in lms.db.
-- Free accounts must be renewed every three months from the Web tab.
-- To update the code: upload the new zip, unzip over the folder, press Reload.
-  lms.db is never inside the zip, so your data survives.
-- Mark changes are recorded in an audit log table (audit_log) with who and when.
-================================================================================
+WHEN A TIME IS ALREADY TAKEN
+----------------------------
+Setting up a class never silently drops a day. If any of your times will not
+fit, the system stops before creating anything and shows you a screen headed
+"Some of those times are taken", with the reason for each one and what else
+would work:
+
+  KEEP THE TIME, CHANGE THE TEACHER
+    Another teacher is free at exactly that hour. The student's day and time
+    do not move, so nobody needs telling. Chosen for you by default.
+
+  KEEP THE DAY, MOVE THE TIME
+    The nearest working times on the same day with the same teacher, closest
+    first. Never chosen for you, because it needs the student's agreement.
+
+  LEAVE THAT DAY OUT
+    The class runs on the other days. Add this one later if something frees up.
+
+  BOOK IT ANYWAY
+    Shown when some dates are free and only a few clash. Books the free ones.
+
+Nothing is created until you press "Confirm and create the class".
+
+If you give some days to a different teacher, you get one class record per
+teacher - each with the right days - so registers and reports stay correct.
+
+
+THE BREAK RULE
+--------------
+After two classes back to back a teacher needs 30 minutes. So 10:00-11:00 and
+11:00-12:00 means the next class can start at 12:30, not 12:00.
+
+The system does not just refuse. Ask for 12:00 and it answers:
+
+    Adeeb Ahmed would have 3 classes in a row. Needs a 30-minute break
+    first, so the earliest is 12:30 PM.
+    [ Use 12:30 PM ]  [ Use 12:45 PM ]  [ Use 1:00 PM ]
+
+One click and the time is set. The same suggestions appear when you change a
+single class, and while you are building a new one.
+
+No break is invented where classes are not adjacent. A 10:00 class and a 3:00
+class need nothing in between.
+
+
+MANAGING A CLASS
+----------------
+Classes > open one:
+
+  DAYS AND TIMES   change a time, add a day, drop one. Future classes are
+                   rebuilt on the new pattern and clash-checked as they go.
+                   Choose from today onwards, or the whole run.
+  STUDENTS         add or remove at any time.
+  PAUSE            suspend between two dates. Those classes are cancelled and
+                   the slot frees up. Resume puts them back.
+  KEEP IT GOING    extend the finish date, or set no end date at all.
+  FINISH           cancel everything ahead; past records are kept.
+  REMOVE DATES     delete a holiday week without ending the class.
+  DELETE           removes the class and every session. Needs DELETE typed.
+
+Build ahead on the Classes page tops every running class up 3, 6 or 12 months.
+
+
+THE TIMETABLE
+-------------
+Day, Week or Month - the layout changes with the choice.
+
+DAY gives every teacher's full timeline: classes, protected time, and the gaps
+between. Any run of 3 classes with no break is flagged in red. Every free gap
+of an hour or more has a "Use this slot" button - click it to book a student
+straight in, or to keep the time clear for a break or prayer.
+
+Click any class to move it, change the teacher, cancel it or delete it -
+without touching the rest of its run.
+
+
+WHAT TEACHERS SEE
+-----------------
+MY SCHEDULE in Day, Week or Month. Day shows their timeline with free gaps.
+
+STILL TO WRITE UP sits at the top: any class that has finished without
+attendance or lesson notes, with how long ago it ended and a button straight
+to it.
+
+WRITE IT UP is one screen. Mark who came - with All present for the usual case
+- and type the topic, how it went and the homework. One save does both. The
+course register updates at the same time, so nothing is entered twice.
+
+MY COURSES shows every subject they teach, whether they got there through a
+batch, a one-to-one, or direct enrolment.
+
+
+ROUTINES AS PDF
+---------------
+Routines in the menu. Choose who - all students, one student, a batch, a
+course, all teachers, one teacher, or the whole centre - pick the dates, and
+download.
+
+Student routines are a card: name and ID, the weekly pattern, then the dates
+grouped by month. Classes only. Days with nothing are left out. Cancelled
+classes are hidden from students and shown to admin.
+
+Quick buttons for this week, next week and this month.
+
+
+BACKUP
+------
+Everything lives in pie.db. Copy that one file somewhere safe and date it.
+Do it weekly, and always before deleting anything permanently.

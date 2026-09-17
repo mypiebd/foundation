@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% import "partials/course_about.html" as ab %}
+{% import "partials/macros.html" as m %}
+{% block title %}{{ course.course_code }} · PIE Scheduler{% endblock %}
+{% block content %}
+<div class="student-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('student.dashboard') }}">&larr; My learning</a></p>
+    <h1 class="page-title">
+      <span class="pill pill-navy" style="font-size:.9rem;vertical-align:middle">{{ course.course_code }}</span>
+      {{ course.course_name }}
+    </h1>
+    <p class="page-sub">{{ window_label }}</p>
+  </div>
+  <div class="head-figures">
+    <div class="figure {{ 'is-low' if att.percent < 75 and att.held }}">
+      <div class="figure-number">{{ att.percent }}<span class="figure-unit">%</span></div>
+      <div class="figure-label">My attendance</div>
+    </div>
+    <div class="figure">
+      <div class="figure-number">{{ att.attended }}</div>
+      <div class="figure-label">Attended of {{ att.held }}</div>
+    </div>
+  </div>
+</div>
+
+{{ ab.course_about(course, classes=course_classes) }}
+
+<div class="form-row cols-2" style="gap:1.25rem;margin-bottom:1.25rem">
+
+  {# What was covered #}
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        What we covered <span class="count-pill">{{ logs|length }}</span>
+      </h2>
+    </div>
+    {% if logs %}
+    <div style="max-height:28rem;overflow-y:auto">
+      {% for log in logs %}
+      <div style="padding:.85rem 1.15rem;border-bottom:1px solid var(--line-soft)">
+        <div class="sub">{{ log.class_date.strftime('%A, %d %b %Y') }}</div>
+        <div style="font-weight:700;font-size:.92rem;margin-top:.15rem">{{ log.topic_taught }}</div>
+        {% if log.summary_notes %}
+          <div style="font-size:.85rem;color:var(--ink-2);margin-top:.3rem">{{ log.summary_notes }}</div>
+        {% endif %}
+        {% if log.homework %}
+          <div style="font-size:.82rem;margin-top:.4rem;padding:.4rem .6rem;
+                      background:var(--warn-bg);border-radius:.25rem">
+            <strong>Homework:</strong> {{ log.homework }}
+          </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-line">Your teacher has not logged any lessons yet.</p>
+    {% endif %}
+  </div>
+
+  {# My attendance record #}
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        My attendance record <span class="count-pill">{{ att_records|length }}</span>
+      </h2>
+    </div>
+    {% if att_records %}
+    <div class="table-responsive" style="max-height:28rem;overflow-y:auto">
+      <table class="list-table">
+        <thead><tr><th>Date</th><th>Day</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for r in att_records %}
+        <tr>
+          <td class="nowrap">{{ r.date.strftime('%d %b %Y') }}</td>
+          <td class="sub">{{ r.date.strftime('%A') }}</td>
+          <td>
+            {% if r.status == 'Present' %}<span class="pill pill-green">Present</span>
+            {% elif r.status == 'Late' %}<span class="pill pill-amber">Late</span>
+            {% else %}<span class="pill pill-red">Absent</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-line">No attendance recorded yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+{# Work and marks #}
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">
+      My work &amp; marks <span class="count-pill">{{ assessments|length }}</span>
+    </h2>
+  </div>
+  {% if assessments %}
+  <div style="padding:.75rem 1.15rem;display:flex;flex-direction:column;gap:.75rem">
+    {% for a in assessments %}
+    {% set r = results.get(a.id) %}
+    <div class="work-card {{ 'is-late' if a.is_overdue and (not r or not r.submitted_at) }}">
+      <div class="work-top">
+        <span class="work-kind">{{ a.kind }}</span>
+        {% if r %}
+          {% if r.state == 'Marked' %}<span class="pill pill-green">Marked</span>
+          {% elif r.state == 'Received' %}<span class="pill pill-blue">Received by teacher</span>
+          {% elif r.state == 'Submitted' %}<span class="pill pill-amber">Submitted</span>
+          {% else %}<span class="pill pill-gray">Not handed in</span>{% endif %}
+        {% endif %}
+        <span class="work-due">
+          {% if a.due_date %}Due {{ a.due_date.strftime('%d %b %Y') }}
+            {% if a.is_overdue and (not r or not r.submitted_at) %}
+              <strong style="color:var(--red)"> · Overdue</strong>{% endif %}
+          {% else %}No due date{% endif %}
+        </span>
+      </div>
+      <div class="work-title">{{ a.title }}</div>
+      {% if a.instructions %}<div class="work-body">{{ a.instructions }}</div>{% endif %}
+
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.2rem">
+        {% if a.attachment_key %}
+          <a class="btn btn-xs btn-primary"
+             href="{{ url_for('student.download_brief', aid=a.id) }}">
+            Download {{ a.attachment_name|truncate(28) }}</a>
+        {% endif %}
+        {% if a.attachment_link %}
+          <a class="btn btn-xs btn-outline" href="{{ a.attachment_link }}"
+             target="_blank" rel="noopener">Open the paper</a>
+        {% endif %}
+      </div>
+
+      {# Score #}
+      {% if r and r.score is not none %}
+      <div style="margin-top:.7rem;padding:.6rem .8rem;background:var(--ok-bg);
+                  border-radius:.3rem;border:1px solid #a7f3d0">
+        <div style="font-size:1.05rem;font-weight:700;color:var(--ok)">
+          {{ r.score }} / {{ a.max_score }}
+          <span style="font-size:.85rem;font-weight:500"> ({{ r.percent }}%)</span>
+        </div>
+        {% if r.feedback %}
+        <div style="font-size:.85rem;margin-top:.35rem;color:var(--ink-2)">
+          <strong>Teacher feedback:</strong> {{ r.feedback }}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# Submission #}
+      {% if a.needs_submission %}
+      <div class="hand-in">
+        {% if r and (r.file_key or r.submission_link) %}
+          <div class="hand-state">
+            <div>
+              <strong>
+                {% if r.state == 'Marked' %}Marked
+                {% elif r.received %}Received by your teacher
+                {% else %}Handed in — waiting for your teacher to confirm{% endif %}
+              </strong>
+              <div class="sub">
+                Sent {{ r.submitted_at.strftime('%d %b %Y at %H:%M') if r.submitted_at }}
+                {% if r.received and r.received_at %}
+                  &middot; confirmed {{ r.received_at.strftime('%d %b at %H:%M') }}
+                {% endif %}
+              </div>
+            </div>
+            <div style="display:flex;gap:.35rem;flex-wrap:wrap">
+              {% if r.file_key %}
+                <a class="btn btn-xs btn-outline"
+                   href="{{ url_for('student.download_mine', rid=r.id) }}">{{ r.file_name|truncate(24) }}</a>
+              {% endif %}
+              {% if r.submission_link %}
+                <a class="btn btn-xs btn-outline" href="{{ r.submission_link }}"
+                   target="_blank" rel="noopener">your link</a>
+              {% endif %}
+            </div>
+          </div>
+        {% endif %}
+
+        {% if not r or r.score is none %}
+        <form method="post" enctype="multipart/form-data"
+              action="{{ url_for('student.submit', aid=a.id) }}" class="hand-form">
+          <div>
+            <label class="form-label">
+              {{ 'Replace your file' if r and r.file_key else 'Your file' }}
+            </label>
+            <input type="file" class="form-control" name="submission_file"
+                   accept=".doc,.docx,.pdf,.jpg,.jpeg,.png,.ppt,.pptx,.xls,.xlsx,.txt">
+            <div class="form-hint">Word, PDF or an image. Up to 15 MB.</div>
+          </div>
+          <div>
+            <label class="form-label">Or a link</label>
+            <input class="form-control" name="submission_link"
+                   value="{{ r.submission_link if r and r.submission_link else '' }}"
+                   placeholder="Google Drive or similar">
+          </div>
+          <div>
+            <label class="form-label">Note for your teacher</label>
+            <input class="form-control" name="student_note"
+                   value="{{ r.student_note if r and r.student_note else '' }}"
+                   placeholder="Optional">
+          </div>
+          <button class="btn btn-sm btn-primary">
+            {{ 'Send again' if r and (r.file_key or r.submission_link) else 'Hand it in' }}
+          </button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-line">No work has been set for this course yet.</p>
+  {% endif %}
+</div>
+
+{# Materials #}
+{% if materials %}
+<div class="panel p-0">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">
+      Class materials <span class="count-pill">{{ materials|length }}</span>
+    </h2>
+  </div>
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Title</th><th>Kind</th><th>Added</th></tr></thead>
+      <tbody>
+      {% for mat in materials %}
+      <tr>
+        <td>
+          <a href="{{ url_for('open_material', mid=mat.id) }}" target="_blank" rel="noopener">
+            {{ mat.title }}
+          </a>
+        </td>
+        <td>
+          {% if mat.is_link %}<span class="pill pill-blue">Link</span>
+          {% else %}<span class="pill pill-gray">File</span>{% endif %}
+        </td>
+        <td class="sub nowrap">{{ mat.uploaded_at.strftime('%d %b %Y') }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+<style>
+.hand-in{margin-top:.7rem;padding:.7rem .85rem;background:var(--surface);
+  border:1px solid var(--line);border-radius:.3rem}
+.hand-state{display:flex;justify-content:space-between;gap:.7rem;
+  align-items:flex-start;flex-wrap:wrap;margin-bottom:.6rem}
+.hand-form{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:.6rem;
+  align-items:end}
+@media(max-width:800px){.hand-form{grid-template-columns:1fr}}
+</style>
+
+{% block scripts %}
+{{ ab.course_about_script() }}
+{% endblock %}

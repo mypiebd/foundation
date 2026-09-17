@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ course.course_code }} · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('admin.course_detail', cid=course.id) }}">&larr; Back to the subject</a></p>
+    <h1 class="page-title">Edit {{ course.course_name }}</h1>
+    <p class="page-sub">
+      What you write here is what teachers and students see on the subject page.
+    </p>
+  </div>
+</div>
+
+<div style="max-width:780px">
+<form method="post" class="warn-unsaved">
+
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">Name and code</h3>
+    <div class="form-row cols-3" style="margin-bottom:1rem">
+      <div>
+        <label class="form-label">Code <span class="req">*</span></label>
+        <input class="form-control mono" name="course_code"
+               value="{{ course.course_code }}" required>
+        <div class="form-hint">Shows as a badge everywhere.</div>
+      </div>
+      <div style="grid-column:span 2">
+        <label class="form-label">Name <span class="req">*</span></label>
+        <input class="form-control" name="course_name"
+               value="{{ course.course_name }}" required>
+      </div>
+    </div>
+    {% if groups %}
+    <div class="alert alert-warning" style="margin:0">
+      <div><strong>{{ groups|length }} class(es) use this subject.</strong>
+        Renaming is safe — attendance, marks and routines follow the subject,
+        not its name. Changing the <em>code</em> changes what prints on every
+        routine and register.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">What the course is</h3>
+    <label class="form-label">Description</label>
+    <textarea class="form-control" name="description" rows="6"
+      placeholder="A few sentences a student would understand. This is the main thing they read.">{{ course.description or '' }}</textarea>
+    <div class="form-hint">Plain prose. Shown to admin, teachers and students.</div>
+  </div>
+
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">Qualification facts <span class="sub">(optional)</span></h3>
+    <div class="form-row cols-2" style="margin-bottom:1rem">
+      <div>
+        <label class="form-label">Module code</label>
+        <input class="form-control" name="mnemonic" value="{{ course.mnemonic or '' }}"
+               placeholder="e.g. 03 IFY MDH">
+      </div>
+      <div>
+        <label class="form-label">Awarded by</label>
+        <input class="form-control" name="awarding_body"
+               value="{{ course.awarding_body or '' }}"
+               placeholder="e.g. INTO Qualifications">
+      </div>
+    </div>
+    <div class="form-row cols-3">
+      <div>
+        <label class="form-label">Level</label>
+        <input class="form-control" name="level" value="{{ course.level or '' }}"
+               placeholder="e.g. RQF Level 3">
+      </div>
+      <div>
+        <label class="form-label">Credits</label>
+        <input type="number" class="form-control" name="credits"
+               value="{{ course.credits or '' }}">
+      </div>
+      <div>
+        <label class="form-label">Learning hours</label>
+        <input type="number" class="form-control" name="learning_hours"
+               value="{{ course.learning_hours or '' }}">
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">How it is assessed <span class="sub">(optional)</span></h3>
+    <textarea class="form-control" name="assessment" rows="5"
+      placeholder="One component per line, e.g.&#10;Paper 1 — exam, 1h 50m, 10 credits&#10;Presentation — 5–10 minutes, 5 credits">{{ course.assessment or '' }}</textarea>
+    <div class="form-hint">One per line. Shown as a list.</div>
+  </div>
+
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">What students will learn <span class="sub">(optional)</span></h3>
+    <textarea class="form-control" name="outcomes" rows="8"
+      placeholder="One topic or outcome per line.">{{ course.outcomes or '' }}</textarea>
+    <div class="form-hint">
+      One per line. Students see the first few with a button to show the rest.
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:1.1rem">
+    <h3 class="form-section-title">Branch <span class="sub">(optional)</span></h3>
+    <select class="form-select" name="branch" style="max-width:250px">
+      <option value="">All branches</option>
+      {% for b in BRANCHES %}
+        <option {{ 'selected' if course.branch == b }}>{{ b }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div style="display:flex;gap:.5rem">
+    <button class="btn btn-primary">Save the subject</button>
+    <a class="btn btn-link" href="{{ url_for('admin.course_detail', cid=course.id) }}">Cancel</a>
+  </div>
+</form>
+</div>
+{% endblock %}

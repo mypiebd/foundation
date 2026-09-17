@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}{{ g.name }} · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('admin.classes') }}">&larr; All classes</a></p>
+    <h1 class="page-title">{{ g.name }}</h1>
+    <p class="page-sub">
+      {% if g.kind == 'Batch' %}<span class="pill pill-green">Batch</span>
+      {% else %}<span class="pill pill-blue">One-to-one</span>{% endif %}
+      {% if g.course %} &middot; {{ g.course.course_code }} — {{ g.course.course_name }}{% endif %}
+      &middot; {{ g.teacher.full_name if g.teacher else 'no teacher' }}
+      &middot; {{ g.student_count }} student(s)
+      &middot; {% if g.is_indefinite %}runs until stopped
+              {% else %}until {{ g.end_date.strftime('%d %b %Y') }}{% endif %}
+    </p>
+  </div>
+</div>
+
+{% if g.status == 'Paused' %}
+<div class="alert alert-warning"><div>
+  <strong>Paused</strong>
+  {% if g.pause_from %}from {{ g.pause_from.strftime('%d %b %Y') }}{% endif %}
+  {% if g.pause_to %}to {{ g.pause_to.strftime('%d %b %Y') }}{% else %}onwards{% endif %}.
+  {% if g.note %} {{ g.note }}{% endif %}
+  <form method="post" action="{{ url_for('admin.class_resume', gid=g.id) }}"
+        style="display:inline;margin-left:.5rem">
+    <button class="btn btn-sm btn-success">Start it again</button>
+  </form>
+</div></div>
+{% elif g.status == 'Stopped' %}
+<div class="alert alert-info"><div>
+  <strong>Stopped</strong>{% if g.end_date %} on {{ g.end_date.strftime('%d %b %Y') }}{% endif %}.
+  {% if g.note %}{{ g.note }}{% endif %}
+  Everything already taught is kept. Extend below to start it up again.
+</div></div>
+{% endif %}
+
+<div class="stat-row">
+  <div class="stat-card"><div class="stat-value">{{ c.upcoming }}</div>
+    <div class="stat-label">Classes ahead</div></div>
+  <div class="stat-card"><div class="stat-value">{{ c.past }}</div>
+    <div class="stat-label">Already taught</div></div>
+  <div class="stat-card"><div class="stat-value" style="color:var(--ink-soft)">{{ c.cancelled }}</div>
+    <div class="stat-label">Cancelled</div></div>
+  <div class="stat-card"><div class="stat-value">{{ g.student_count }}</div>
+    <div class="stat-label">Students</div></div>
+</div>
+
+<div class="form-row cols-2" style="gap:1.25rem;margin-bottom:1.25rem">
+
+  <!-- Timetable -->
+  <div class="panel">
+    <h3 class="form-section-title">Days and times</h3>
+    <p class="panel-hint" style="margin-bottom:.8rem">
+      Change a time, add a day or drop one. Future classes are rebuilt on the
+      new pattern and clash-checked as they go.
+    </p>
+    <form method="post" action="{{ url_for('admin.class_slots', gid=g.id) }}">
+      <div id="slotRows">
+        {% for s in g.slots %}
+        <div class="slot-row">
+          <select class="form-select" name="slot_day_{{ loop.index }}">
+            {% for v,l in [(5,'Saturday'),(6,'Sunday'),(0,'Monday'),(1,'Tuesday'),
+                           (2,'Wednesday'),(3,'Thursday'),(4,'Friday')] %}
+              <option value="{{ v }}" {{ 'selected' if s.weekday == v }}>{{ l }}</option>
+            {% endfor %}
+          </select>
+          <input type="time" class="form-control" name="slot_from_{{ loop.index }}"
+                 value="{{ s.start_time.strftime('%H:%M') }}">
+          <input type="time" class="form-control" name="slot_to_{{ loop.index }}"
+                 value="{{ s.end_time.strftime('%H:%M') }}">
+          <button type="button" class="btn btn-link btn-sm rm">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" class="btn btn-outline btn-sm" id="addSlot">+ Add a day</button>
+
+      <div class="form-row cols-2" style="margin-top:1rem">
+        <div>
+          <label class="form-label">Teacher</label>
+          <select class="form-select" name="teacher_id">
+            {% for t in teachers_all %}
+              <option value="{{ t.id }}" {{ 'selected' if g.teacher_id == t.id }}>
+                {{ t.full_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Where</label>
+          <select class="form-select" name="venue">
+            {% for v in ['Centre','Online','Zoom'] %}
+              <option {{ 'selected' if g.venue == v }}>{{ v }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div style="margin:.9rem 0">
+        <label class="form-label">Apply to</label>
+        <label style="display:inline-flex;align-items:center;gap:.3rem;font-size:.85rem;margin-right:1rem">
+          <input type="radio" name="scope" value="future" checked> From today onwards
+        </label>
+        <label style="display:inline-flex;align-items:center;gap:.3rem;font-size:.85rem">
+          <input type="radio" name="scope" value="all"> The whole run
+        </label>
+      </div>
+      <button class="btn btn-primary">Save the timetable</button>
+    </form>
+  </div>
+
+  <!-- Pause / extend -->
+  <div class="panel">
+    <h3 class="form-section-title">Pause for a while</h3>
+    <p class="panel-hint" style="margin-bottom:.8rem">
+      Exam weeks, a holiday, a teacher away. Classes in that window are
+      cancelled and the slot frees up. Leave the return date blank to pause
+      until further notice.
+    </p>
+    <form method="post" action="{{ url_for('admin.class_pause', gid=g.id) }}">
+      <div class="form-row cols-2" style="margin-bottom:.8rem">
+        <div><label class="form-label">From</label>
+          <input type="date" class="form-control" name="pause_from" value="{{ today_str }}" required></div>
+        <div><label class="form-label">Back on</label>
+          <input type="date" class="form-control" name="pause_to"></div>
+      </div>
+      <input class="form-control" name="note" placeholder="Reason (optional)"
+             style="margin-bottom:.8rem">
+      <button class="btn btn-outline" style="border-color:var(--warn);color:var(--warn)">
+        Pause it</button>
+    </form>
+
+    <hr style="border:0;border-top:1px solid var(--line);margin:1.2rem 0">
+
+    <h3 class="form-section-title">Keep it going longer</h3>
+    <form method="post" action="{{ url_for('admin.class_extend', gid=g.id) }}">
+      <div style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:150px">
+          <label class="form-label">New finish date</label>
+          <input type="date" class="form-control" name="new_end">
+        </div>
+        <button class="btn btn-primary" name="mode" value="date">Extend</button>
+        <button class="btn btn-outline" name="mode" value="forever">No end date</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Students -->
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">
+      Students <span class="count-pill">{{ g.student_count }}</span></h2>
+    <button class="btn btn-sm btn-primary"
+            onclick="document.getElementById('addStu').style.display='flex'">
+      + Add students</button>
+  </div>
+  {% if g.members %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th></th></tr></thead>
+      <tbody>
+      {% for mem in g.members %}
+      <tr>
+        <td class="mono sub">{{ mem.student.username }}</td>
+        <td><a href="{{ url_for('admin.student_profile', sid=mem.student.id) }}">
+          {{ mem.student.full_name }}</a></td>
+        <td class="sub mono">{{ mem.student.phone or '—' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('admin.class_students', gid=g.id) }}">
+            <input type="hidden" name="action" value="remove">
+            <input type="hidden" name="student_id" value="{{ mem.student.id }}">
+            <button class="btn btn-xs btn-link" style="color:var(--red)">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">Nobody added yet. The classes still run — add students
+    whenever you are ready.</p>
+  {% endif %}
+</div>
+
+<!-- Upcoming -->
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">
+      Classes ahead <span class="count-pill">{{ upcoming|length }}</span></h2>
+    <span class="sub">Click one to change just that day</span>
+  </div>
+  {% if upcoming %}
+  <div class="table-responsive" style="max-height:24rem;overflow-y:auto">
+    <table class="list-table">
+      <thead><tr><th>Date</th><th>Day</th><th>Time</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for x in upcoming %}
+      <tr>
+        <td class="nowrap">{{ x.date.strftime('%d %b %Y') }}</td>
+        <td class="sub">{{ x.date.strftime('%A') }}</td>
+        <td class="nowrap mono">{{ x.start_str }} - {{ x.end_str }}</td>
+        <td>{{ m.pill_sched(x.status) }}</td>
+        <td><a class="btn btn-xs btn-outline"
+               href="{{ url_for('admin.edit_schedule', cid=x.id) }}">Change</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">Nothing ahead. Use <em>Keep it going longer</em>, or
+    <em>Build ahead</em> on the classes page.</p>
+  {% endif %}
+</div>
+
+<!-- Stop / remove -->
+<div class="form-row cols-2" style="gap:1.25rem">
+  <div class="panel" style="border-left:3px solid var(--warn)">
+    <h3 class="form-section-title">Finish this class</h3>
+    <p class="panel-hint">
+      For a batch that has run its course. Everything ahead is cancelled;
+      registers, marks and lesson logs are kept.
+    </p>
+    <form method="post" action="{{ url_for('admin.class_stop', gid=g.id) }}">
+      <div class="form-row cols-2" style="margin-bottom:.8rem">
+        <div><label class="form-label">Last day</label>
+          <input type="date" class="form-control" name="from_date" value="{{ today_str }}"></div>
+        <div><label class="form-label">Note</label>
+          <input class="form-control" name="note" placeholder="e.g. Course finished"></div>
+      </div>
+      <button class="btn btn-outline" style="border-color:var(--warn);color:var(--warn)">
+        Mark as finished</button>
+    </form>
+  </div>
+
+  <div class="panel panel-flag">
+    <h3 class="form-section-title">Remove classes</h3>
+    <p class="panel-hint" style="margin-bottom:.7rem">
+      Delete a run of dates — a holiday week — without ending the class.
+    </p>
+    <form method="post" action="{{ url_for('admin.class_delete_range', gid=g.id) }}"
+          style="margin-bottom:1.2rem">
+      <div class="form-row cols-2" style="margin-bottom:.7rem">
+        <div><label class="form-label">From</label>
+          <input type="date" class="form-control" name="del_from" value="{{ today_str }}" required></div>
+        <div><label class="form-label">To</label>
+          <input type="date" class="form-control" name="del_to"></div>
+      </div>
+      <button class="btn btn-outline">Delete those dates</button>
+    </form>
+    <hr style="border:0;border-top:1px solid var(--line);margin:1rem 0">
+    <p class="panel-hint" style="margin-bottom:.7rem">
+      Deleting the class removes <strong>every session, past and future</strong>.
+    </p>
+    <form method="post" action="{{ url_for('admin.class_delete', gid=g.id) }}"
+          style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+      <div style="max-width:170px">
+        <label class="form-label">Type DELETE</label>
+        <input class="form-control" name="confirm" placeholder="DELETE" autocomplete="off">
+      </div>
+      <button class="btn btn-danger">Delete everything</button>
+    </form>
+  </div>
+</div>
+
+<!-- Add students modal -->
+<div id="addStu" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
+     z-index:9000;align-items:center;justify-content:center">
+  <div class="panel" style="width:100%;max-width:480px;margin:1rem">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem">
+      <h3 class="panel-title" style="margin:0">Add students</h3>
+      <button type="button" class="btn btn-link"
+              onclick="document.getElementById('addStu').style.display='none'">&times;</button>
+    </div>
+    <form method="post" action="{{ url_for('admin.class_students', gid=g.id) }}">
+      <input type="hidden" name="action" value="add">
+      <input class="form-control" id="modalFilter" placeholder="Filter…"
+             style="margin-bottom:.5rem" autocomplete="off">
+      <div style="max-height:18rem;overflow-y:auto;border:1px solid var(--line);
+                  border-radius:.3rem;padding:.4rem" id="modalList">
+        {% for s in available %}
+        <label class="stu-row">
+          <input type="checkbox" name="student_ids" value="{{ s.id }}">
+          <span>{{ s.full_name }}</span>
+          <span class="sub mono" style="margin-left:auto">{{ s.username }}</span>
+        </label>
+        {% else %}
+        <p class="sub" style="margin:.4rem">Everyone is already in this class.</p>
+        {% endfor %}
+      </div>
+      <button class="btn btn-primary" style="margin-top:.8rem">Add selected</button>
+    </form>
+  </div>
+</div>
+
+<style>
+.slot-row{display:grid;grid-template-columns:1fr 120px 120px 32px;gap:.45rem;
+  align-items:center;margin-bottom:.45rem}
+.stu-row{display:flex;align-items:center;gap:.5rem;padding:.3rem .35rem;
+  font-size:.85rem;cursor:pointer;border-radius:.2rem}
+.stu-row:hover{background:var(--surface)}
+@media(max-width:700px){.slot-row{grid-template-columns:1fr 1fr}}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var i = {{ g.slots|length }};
+  var rows = document.getElementById('slotRows');
+  function bindRemove(btn) {
+    btn.addEventListener('click', function () { btn.closest('.slot-row').remove(); });
+  }
+  document.querySelectorAll('.rm').forEach(bindRemove);
+  document.getElementById('addSlot').addEventListener('click', function () {
+    i++;
+    var d = document.createElement('div');
+    d.className = 'slot-row';
+    var days = [[5,'Saturday'],[6,'Sunday'],[0,'Monday'],[1,'Tuesday'],
+                [2,'Wednesday'],[3,'Thursday'],[4,'Friday']];
+    d.innerHTML =
+      '<select class="form-select" name="slot_day_' + i + '">' +
+      days.map(function (x) { return '<option value="' + x[0] + '">' + x[1] + '</option>'; }).join('') +
+      '</select>' +
+      '<input type="time" class="form-control" name="slot_from_' + i + '" value="10:00">' +
+      '<input type="time" class="form-control" name="slot_to_' + i + '" value="11:30">' +
+      '<button type="button" class="btn btn-link btn-sm rm">&times;</button>';
+    rows.appendChild(d);
+    bindRemove(d.querySelector('.rm'));
+  });
+  var mf = document.getElementById('modalFilter');
+  if (mf) mf.addEventListener('input', function () {
+    var q = this.value.toLowerCase();
+    document.querySelectorAll('#modalList .stu-row').forEach(function (r) {
+      r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -1,434 +1,549 @@
 {% extends "base.html" %}
 {% import "partials/macros.html" as m %}
-{% block title %}{{ course.course_code }} · {{ org_name }}{% endblock %}
-
+{% import "partials/course_about.html" as ab %}
+{% block title %}{{ course.course_code }} · PIE Scheduler{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <p class="ph-back"><a href="{{ url_for('teacher.my_courses') }}">&larr; My courses</a></p>
-    <h1 class="page-title">{{ course.course_code }} — {{ course.course_name }}</h1>
-    <p class="page-sub">{{ students|length }} students · {{ window_label|lower }}.</p>
-  </div>
-  <div class="head-actions">
-    <a class="btn btn-outline-dark" href="{{ url_for('teacher.attendance_export', course_id=course.id, **request.args) }}">Attendance CSV</a>
-    <a class="btn btn-outline-dark" href="{{ url_for('teacher.marksheet_export', course_id=course.id) }}">Mark sheet CSV</a>
+    <h1 class="page-title">
+      <span class="pill pill-navy" style="font-size:.9rem;vertical-align:middle">{{ course.course_code }}</span>
+      {{ course.course_name }}
+    </h1>
+    <p class="page-sub">{{ students|length }} student(s) &middot; {{ window_label }}</p>
   </div>
 </div>
 
+{% if course.has_detail %}
+  {{ ab.course_about(course) }}
+{% endif %}
+
 <nav class="app-tabs">
-  {% set tabs = [('register','Register'), ('lessons','Lesson log'), ('work','Work set'),
-                 ('marks','Marks'), ('notices','Notices'), ('materials','Materials'),
-                 ('students','Students')] %}
+  {% set tabs = [('register','Register'),('lessons','Lesson log'),('work','Work set'),
+                 ('marks','Marks'),('schedule','Course classes'),
+                 ('materials','Materials'),('notices','Notices')] %}
   {% for key, label in tabs %}
-    <a class="tab {% if tab == key %}active{% endif %}"
-       href="{{ url_for('teacher.course', course_id=course.id, tab=key) }}">{{ label }}</a>
+    <a class="tab {{ 'active' if tab == key }}"
+       href="{{ url_for('teacher.course', cid=course.id, tab=key) }}">{{ label }}</a>
   {% endfor %}
 </nav>
 
-{# ---------------------------------------------------------- register #}
+{# ═══════════════════════════ REGISTER ═══════════════════════════ #}
 {% if tab == 'register' %}
-<div class="row g-4">
-  <div class="col-lg-8">
-    <div class="panel">
-      <form class="row g-3 align-items-end mb-3" method="get">
-        <input type="hidden" name="tab" value="register">
-        <div class="col-sm-6">
-          <label class="form-label">Class date</label>
-          <input type="date" class="form-control" name="class_date" max="{{ today_str }}"
-                 value="{{ class_date.isoformat() }}">
-        </div>
-        <div class="col-sm-6"><button class="btn btn-outline-dark w-100">Load that date</button></div>
-      </form>
-
-      {% if off_day %}
-        <div class="alert alert-danger">{{ class_date.strftime('%d %b %Y') }} is a blocked day
-          {% if off_day.reason %}({{ off_day.reason }}){% endif %} — the register is closed.</div>
-      {% endif %}
-
-      {% if students %}
-      <form method="post" action="{{ url_for('teacher.save_register', course_id=course.id) }}" id="registerForm">
-        <input type="hidden" name="class_date" value="{{ class_date.isoformat() }}">
-        <div class="register-head">
-          <h2 class="panel-title mb-0">{{ class_date.strftime('%A %d %B %Y') }}</h2>
-          {% if not off_day %}
-          <div class="bulk-buttons">
-            <button type="button" class="btn btn-sm btn-outline-dark" data-mark-all="Present">All present</button>
-            <button type="button" class="btn btn-sm btn-outline-dark" data-mark-all="Absent">All absent</button>
-          </div>
-          {% endif %}
-        </div>
-        <div class="table-responsive">
-          <table class="table align-middle mb-0 register">
-            <thead><tr><th>Student</th><th class="text-center">Present</th>
-                       <th class="text-center">Late</th><th class="text-center">Absent</th></tr></thead>
-            <tbody>
-            {% for s in students %}
-              <tr>
-                <td><a href="{{ url_for('admin.student_profile', student_id=s.id) }}">{{ s.full_name }}</a>
-                  <div class="sub mono">{{ s.username }}</div></td>
-                {% for status in ['Present', 'Late', 'Absent'] %}
-                  <td class="text-center">
-                    <input class="form-check-input" type="radio" name="status_{{ s.id }}" value="{{ status }}"
-                           {% if existing.get(s.id) == status %}checked{% endif %}
-                           {% if off_day %}disabled{% endif %}></td>
-                {% endfor %}
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% if not off_day %}
-          <div class="mt-3 text-end"><button class="btn btn-primary">Save the register</button></div>
-        {% endif %}
-      </form>
-      {% else %}
-        <p class="empty-line">No students are enrolled under you on this course.</p>
-      {% endif %}
+{% if not students %}
+  <div class="panel"><p class="empty-line" style="padding:1rem 0">
+    No students enrolled. An administrator needs to enrol them first.</p></div>
+{% else %}
+<div class="panel" style="margin-bottom:1.25rem">
+  <form method="get" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+    <input type="hidden" name="tab" value="register">
+    <div>
+      <label class="form-label">Class date</label>
+      <input type="date" class="form-control" name="class_date"
+             value="{{ class_date.isoformat() }}" onchange="this.form.submit()">
     </div>
-  </div>
-
-  <div class="col-lg-4">
-    <div class="panel">
-      <h2 class="panel-title">Dates already marked</h2>
-      {% if marked_dates %}
-        <div class="chip-row">
-          {% for d in marked_dates %}
-            <a class="date-chip {% if d == class_date %}is-current{% endif %}"
-               href="{{ url_for('teacher.course', course_id=course.id, tab='register', class_date=d.isoformat()) }}">
-              {{ d.strftime('%d %b') }}</a>
-          {% endfor %}
-        </div>
-        <p class="panel-hint mt-3 mb-0">Click a date to review or correct it.</p>
-      {% else %}<p class="empty-line">No registers taken in this period.</p>{% endif %}
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{# ---------------------------------------------------------- lessons #}
-{% if tab == 'lessons' %}
-<div class="row g-4">
-  <div class="col-lg-5">
-    <div class="panel">
-      <h2 class="panel-title">Log what you taught</h2>
-      <form method="post" action="{{ url_for('teacher.log_lesson', course_id=course.id) }}">
-        <div class="mb-3"><label class="form-label">Class date</label>
-          <input type="date" class="form-control" name="class_date" value="{{ today_str }}" required></div>
-        <div class="mb-3"><label class="form-label">Topic covered</label>
-          <input class="form-control" name="topic_taught" placeholder="Class 3 — Quadratic equations" required></div>
-        <div class="mb-3"><label class="form-label">Notes for students</label>
-          <textarea class="form-control" name="summary_notes" rows="5"
-                    placeholder="What was practised, what to read before next class."></textarea></div>
-        <button class="btn btn-primary w-100">Post the lesson</button>
-      </form>
-    </div>
-  </div>
-  <div class="col-lg-7">
-    <div class="panel">
-      <h2 class="panel-title">Class history <span class="count-pill">{{ lessons|length }}</span></h2>
-      {% if lessons %}
-        <ol class="feed">
-        {% for l in lessons %}
-          <li class="feed-item">
-            <div class="feed-meta">
-              <span class="mono">{{ l.class_date.strftime('%d %b %Y') }}</span>
-              <span class="text-muted small">{{ l.teacher.full_name }}</span>
-              <form method="post" action="{{ url_for('teacher.delete_lesson', lesson_id=l.id) }}"
-                    class="ms-auto" onsubmit="return confirm('Delete this entry?')">
-                <button class="btn btn-sm btn-link text-danger p-0">Delete</button></form>
-            </div>
-            <h3 class="feed-title">{{ l.topic_taught }}</h3>
-            {% if l.summary_notes %}<p class="feed-body">{{ l.summary_notes }}</p>{% endif %}
-          </li>
+    <a class="btn btn-outline"
+       href="{{ url_for('teacher.attendance_export', cid=course.id) }}">Export attendance CSV</a>
+    {% if marked_dates %}
+    <div style="margin-left:auto;max-width:220px">
+      <label class="form-label">Jump to a marked date</label>
+      <select class="form-select" name="class_date" onchange="this.form.submit()">
+        {% for d in marked_dates %}
+          <option value="{{ d.isoformat() }}" {{ 'selected' if d == class_date }}>
+            {{ d.strftime('%d %b %Y') }}
+          </option>
         {% endfor %}
-        </ol>
-      {% else %}<p class="empty-line">Nothing logged yet.</p>{% endif %}
+      </select>
     </div>
-  </div>
-</div>
-{% endif %}
-
-{# ------------------------------------------------------------- work #}
-{% if tab == 'work' %}
-<div class="row g-4">
-  <div class="col-lg-5">
-    <div class="panel">
-      <h2 class="panel-title">Set work</h2>
-      <p class="panel-hint">Students see this on their dashboard with the due date.
-        Attach the task as a link — Drive, Docs or anywhere else.</p>
-      <form method="post" action="{{ url_for('teacher.create_work', course_id=course.id) }}">
-        <div class="mb-3"><label class="form-label">Title</label>
-          <input class="form-control" name="title" placeholder="Essay 2 — cause and effect" required></div>
-        <div class="row g-3 mb-3">
-          <div class="col-7"><label class="form-label">Type</label>
-            <select class="form-select" name="kind">
-              {% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></div>
-          <div class="col-5"><label class="form-label">Max mark</label>
-            <input type="number" step="0.5" min="1" class="form-control" name="max_score" value="100"></div>
-        </div>
-        <div class="row g-3 mb-3">
-          <div class="col-6"><label class="form-label">Set on</label>
-            <input type="date" class="form-control" name="assigned_date" value="{{ today_str }}"></div>
-          <div class="col-6"><label class="form-label">Due</label>
-            <input type="date" class="form-control" name="due_date"></div>
-        </div>
-        <div class="mb-3"><label class="form-label">Instructions</label>
-          <textarea class="form-control" name="instructions" rows="4"></textarea></div>
-        <div class="mb-3"><label class="form-label">Task link</label>
-          <input class="form-control" name="attachment_link" placeholder="https://drive.google.com/…"></div>
-        <label class="form-check mb-2">
-          <input class="form-check-input" type="checkbox" name="needs_submission" value="1" checked>
-          <span class="form-check-label">Students submit a link</span></label>
-        <label class="form-check mb-3">
-          <input class="form-check-input" type="checkbox" name="is_published" value="1" checked>
-          <span class="form-check-label">Visible to students now</span></label>
-        <button class="btn btn-primary w-100">Post the work</button>
-      </form>
-    </div>
-  </div>
-  <div class="col-lg-7">
-    <div class="panel p-0">
-      <div class="panel-pad"><h2 class="panel-title mb-0">Work set <span class="count-pill">{{ assessments|length }}</span></h2></div>
-      <div class="table-responsive">
-        <table class="table align-middle mb-0 list-table">
-          <thead><tr><th>Title</th><th>Due</th><th>Submitted</th><th>Marked</th><th></th></tr></thead>
-          <tbody>
-          {% for a in assessments %}
-            <tr>
-              <td><strong>{{ a.title }}</strong>
-                {% if not a.is_published %}<span class="pill pill-off">Hidden</span>{% endif %}
-                <div class="sub">{{ a.kind }} · max {{ '%g'|format(a.max_score) }}</div></td>
-              <td class="mono small nowrap {% if a.is_overdue %}text-warn{% endif %}">
-                {{ a.due_date.strftime('%d %b') if a.due_date else '—' }}</td>
-              <td class="mono small">{{ stats[a.id].submitted }}/{{ stats[a.id].total }}</td>
-              <td class="mono small">{{ stats[a.id].marked }}/{{ stats[a.id].total }}</td>
-              <td class="text-end nowrap">
-                <a class="btn btn-sm btn-primary"
-                   href="{{ url_for('teacher.course', course_id=course.id, tab='marks', assessment_id=a.id) }}">Mark</a>
-                <form class="d-inline" method="post" action="{{ url_for('teacher.toggle_publish', assessment_id=a.id) }}">
-                  <button class="btn btn-sm btn-link">{{ 'Hide' if a.is_published else 'Show' }}</button></form>
-                <form class="d-inline" method="post" action="{{ url_for('teacher.delete_work', assessment_id=a.id) }}"
-                      onsubmit="return confirm('Delete this work and all its marks?')">
-                  <button class="btn btn-sm btn-link text-danger">Delete</button></form>
-              </td>
-            </tr>
-          {% else %}
-            <tr><td colspan="5" class="empty-line p-4">No work set on this course yet.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{# ------------------------------------------------------------ marks #}
-{% if tab == 'marks' %}
-<div class="panel mb-4">
-  <form class="row g-3 align-items-end" method="get">
-    <input type="hidden" name="tab" value="marks">
-    <div class="col-md-9"><label class="form-label">Which piece of work?</label>
-      <select class="form-select" name="assessment_id" onchange="this.form.submit()">
-        <option value="">Choose…</option>
-        {% for a in assessments %}
-          <option value="{{ a.id }}" {% if selected and selected.id == a.id %}selected{% endif %}>
-            {{ a.title }} — {{ a.kind }}{% if a.due_date %} (due {{ a.due_date.strftime('%d %b') }}){% endif %}</option>
-        {% endfor %}
-      </select></div>
-    <div class="col-md-3"><button class="btn btn-outline-dark w-100">Load</button></div>
+    {% endif %}
   </form>
 </div>
 
-{% if selected %}
-<div class="panel">
-  <h2 class="panel-title">{{ selected.title }} <span class="count-pill">out of {{ '%g'|format(selected.max_score) }}</span></h2>
-  <p class="panel-hint">Leave a score blank to skip a student. Tick “received” for work
-    handed in outside the system.</p>
-  <form method="post" action="{{ url_for('teacher.save_marks', assessment_id=selected.id) }}">
-    <div class="table-responsive">
-      <table class="table align-middle mb-0">
-        <thead><tr><th>Student</th><th>Submission</th><th class="text-center">Received</th>
-                   <th style="width:110px">Score</th><th>Feedback</th></tr></thead>
+<form method="post" action="{{ url_for('teacher.save_register', cid=course.id) }}"
+      class="warn-unsaved">
+  <input type="hidden" name="class_date" value="{{ class_date.isoformat() }}">
+  <div class="panel p-0">
+    <div class="register-head" style="padding:1rem 1.15rem .5rem">
+      <div>
+        <h2 class="panel-title" style="margin:0">
+          {{ class_date.strftime('%A, %d %B %Y') }}
+        </h2>
+        {% if existing %}
+          <span class="sub">Already marked — you can change it and save again.</span>
+        {% else %}
+          <span class="sub">Not yet marked for this date.</span>
+        {% endif %}
+      </div>
+      <div style="display:flex;gap:.35rem">
+        <button type="button" class="btn btn-sm btn-outline" data-mark-all="Present">All present</button>
+        <button type="button" class="btn btn-sm btn-outline" data-mark-all="Absent">All absent</button>
+      </div>
+    </div>
+    <div class="table-responsive register">
+      <table class="list-table">
+        <thead>
+          <tr><th>ID</th><th>Student</th>
+              <th style="text-align:center">Present</th>
+              <th style="text-align:center">Late</th>
+              <th style="text-align:center">Absent</th></tr>
+        </thead>
         <tbody>
         {% for s in students %}
-          {% set r = results.get(s.id) %}
+          {% set cur = existing.get(s.id) %}
           <tr>
-            <td><a href="{{ url_for('admin.student_profile', student_id=s.id) }}">{{ s.full_name }}</a>
-              <div class="sub mono">{{ s.username }}</div></td>
-            <td class="small">
-              {% if r and r.submission_link %}
-                <a href="{{ r.submission_link }}" target="_blank" rel="noopener">Open work</a>
-                <div class="sub {% if selected.due_date and r.submitted_at.date() > selected.due_date %}text-warn{% endif %}">
-                  {{ r.submitted_at.strftime('%d %b %H:%M') }}
-                  {% if selected.due_date and r.submitted_at.date() > selected.due_date %}· late{% endif %}</div>
-              {% elif r and r.submitted_at %}
-                <span class="text-muted">Received</span>
-              {% else %}
-                <span class="text-muted">Not submitted</span>
-              {% endif %}
+            <td class="mono sub">{{ s.username }}</td>
+            <td>{{ s.full_name }}</td>
+            {% for st in ['Present','Late','Absent'] %}
+            <td style="text-align:center">
+              <input type="radio" name="status_{{ s.id }}" value="{{ st }}"
+                     {{ 'checked' if cur == st }} style="width:17px;height:17px;cursor:pointer">
             </td>
-            <td class="text-center">
-              <input class="form-check-input" type="checkbox" name="received_{{ s.id }}" value="1"
-                     {% if r and r.submitted_at %}checked disabled{% endif %}></td>
-            <td><input type="number" step="0.5" min="0" max="{{ selected.max_score }}"
-                       class="form-control form-control-sm" name="score_{{ s.id }}"
-                       value="{{ '%g'|format(r.score) if r and r.score is not none else '' }}" placeholder="—"></td>
-            <td><input class="form-control form-control-sm" name="feedback_{{ s.id }}"
-                       value="{{ r.feedback if r and r.feedback else '' }}"
-                       placeholder="A line of feedback"></td>
+            {% endfor %}
           </tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
-    <div class="mt-3 text-end"><button class="btn btn-primary">Save marks</button></div>
+    <div style="padding:1rem 1.15rem">
+      <button class="btn btn-primary">Save register</button>
+    </div>
+  </div>
+</form>
+{% endif %}
+{% endif %}
+
+{# ═══════════════════════════ LESSON LOG ═══════════════════════════ #}
+{% if tab == 'lessons' %}
+<div class="form-row cols-2" style="gap:1.25rem">
+  <div class="panel">
+    <h2 class="panel-title">Log what you taught</h2>
+    <p class="panel-hint">Students see this on their dashboard, so they know what was covered.</p>
+    <form method="post" action="{{ url_for('teacher.log_lesson', cid=course.id) }}">
+      <div style="margin-bottom:.85rem;max-width:200px">
+        <label class="form-label">Class date <span class="req">*</span></label>
+        <input type="date" class="form-control" name="class_date" value="{{ today_str }}" required>
+      </div>
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Topic taught <span class="req">*</span></label>
+        <input class="form-control" name="topic_taught" required
+               placeholder="e.g. Writing Task 2 — opinion essays">
+      </div>
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Summary notes</label>
+        <textarea class="form-control" name="summary_notes" rows="3"
+                  placeholder="What was covered, how the class went, anything to follow up…"></textarea>
+      </div>
+      <div style="margin-bottom:1rem">
+        <label class="form-label">Homework set</label>
+        <textarea class="form-control" name="homework" rows="2"
+                  placeholder="e.g. Complete Cambridge 17 Test 2 Writing Task 2"></textarea>
+      </div>
+      <button class="btn btn-primary">Save log entry</button>
+    </form>
+  </div>
+
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        Lesson history <span class="count-pill">{{ logs|length }}</span>
+      </h2>
+    </div>
+    {% if logs %}
+    <div style="max-height:32rem;overflow-y:auto">
+      {% for log in logs %}
+      <div style="padding:.85rem 1.15rem;border-bottom:1px solid var(--line-soft)">
+        <div class="sub" style="margin-bottom:.2rem">
+          {{ log.class_date.strftime('%A, %d %b %Y') }} &middot; {{ log.teacher.full_name }}
+        </div>
+        <div style="font-weight:700;font-size:.92rem">{{ log.topic_taught }}</div>
+        {% if log.summary_notes %}
+          <div style="font-size:.85rem;color:var(--ink-2);margin-top:.3rem">{{ log.summary_notes }}</div>
+        {% endif %}
+        {% if log.homework %}
+          <div style="font-size:.82rem;margin-top:.4rem">
+            <strong>Homework:</strong> {{ log.homework }}
+          </div>
+        {% endif %}
+        <form method="post" action="{{ url_for('teacher.delete_lesson', lid=log.id) }}"
+              onsubmit="return confirm('Delete this log entry?')" style="margin-top:.4rem">
+          <button class="btn btn-xs btn-link" style="color:var(--red)">Delete</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-line">No lessons logged yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# ═══════════════════════════ WORK SET ═══════════════════════════ #}
+{% if tab == 'work' %}
+<div class="form-row cols-2" style="gap:1.25rem">
+  <div class="panel">
+    <h2 class="panel-title">Set work</h2>
+    <p class="panel-hint">Published work appears on students' dashboards straight away.</p>
+    <form method="post" action="{{ url_for('teacher.create_work', cid=course.id) }}" enctype="multipart/form-data">
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Title <span class="req">*</span></label>
+        <input class="form-control" name="title" required
+               placeholder="e.g. Writing Task 2 — Practice 3">
+      </div>
+      <div class="form-row cols-2" style="margin-bottom:.85rem">
+        <div>
+          <label class="form-label">Type</label>
+          <select class="form-select" name="kind">
+            {% for k in kinds %}<option>{{ k }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Marked out of</label>
+          <input type="number" step="0.5" class="form-control" name="max_score" value="100">
+        </div>
+      </div>
+      <div class="form-row cols-2" style="margin-bottom:.85rem">
+        <div>
+          <label class="form-label">Assigned</label>
+          <input type="date" class="form-control" name="assigned_date" value="{{ today_str }}">
+        </div>
+        <div>
+          <label class="form-label">Due</label>
+          <input type="date" class="form-control" name="due_date">
+        </div>
+      </div>
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Instructions</label>
+        <textarea class="form-control" name="instructions" rows="3"
+                  placeholder="What the student needs to do…"></textarea>
+      </div>
+      <div class="form-row cols-2" style="margin-bottom:1rem">
+        <div>
+          <label class="form-label">Attach the paper</label>
+          <input type="file" class="form-control" name="attachment"
+                 accept=".doc,.docx,.pdf,.jpg,.jpeg,.png,.ppt,.pptx,.xls,.xlsx,.txt">
+          <div class="form-hint">Word, PDF or an image. Up to 15 MB.</div>
+        </div>
+        <div>
+          <label class="form-label">Or a link</label>
+          <input class="form-control" name="attachment_link"
+                 placeholder="Google Drive or Docs link">
+        </div>
+      </div>
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;font-size:.84rem">
+        <label style="display:flex;align-items:center;gap:.35rem">
+          <input type="checkbox" name="needs_submission" value="1" checked>
+          Student must hand work in
+        </label>
+        <label style="display:flex;align-items:center;gap:.35rem">
+          <input type="checkbox" name="is_published" value="1" checked>
+          Publish now
+        </label>
+      </div>
+      <button class="btn btn-primary">Set work</button>
+    </form>
+  </div>
+
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        Work set <span class="count-pill">{{ assessments|length }}</span>
+      </h2>
+    </div>
+    {% if assessments %}
+    <div class="table-responsive">
+      <table class="list-table">
+        <thead><tr><th>Title</th><th>Type</th><th>Due</th>
+                   <th>Submitted</th><th>Marked</th><th></th></tr></thead>
+        <tbody>
+        {% for a in assessments %}
+          {% set subs = a.results | selectattr('submitted_at') | list | length %}
+          {% set marked = a.results | selectattr('score') | list | length %}
+          <tr>
+            <td>
+              {{ a.title }}
+              {% if not a.is_published %}<span class="pill pill-gray">Draft</span>{% endif %}
+              <div class="sub">out of {{ a.max_score }}</div>
+            </td>
+            <td><span class="work-kind">{{ a.kind }}</span></td>
+            <td class="sub nowrap">
+              {% if a.due_date %}
+                {{ a.due_date.strftime('%d %b') }}
+                {% if a.is_overdue %}<span class="pill pill-red">Overdue</span>{% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="mono">{{ subs }}/{{ a.results|length }}</td>
+            <td class="mono">{{ marked }}/{{ a.results|length }}</td>
+            <td class="nowrap">
+              <a class="btn btn-xs btn-primary"
+                 href="{{ url_for('teacher.submissions', aid=a.id) }}">Submissions</a>
+              <form method="post" action="{{ url_for('teacher.toggle_publish', aid=a.id) }}"
+                    style="display:inline">
+                <button class="btn btn-xs btn-outline">
+                  {{ 'Unpublish' if a.is_published else 'Publish' }}
+                </button>
+              </form>
+              <form method="post" action="{{ url_for('teacher.delete_work', aid=a.id) }}"
+                    style="display:inline" onsubmit="return confirm('Delete this work and all its marks?')">
+                <button class="btn btn-xs btn-link" style="color:var(--red)">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-line">No work set yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# ═══════════════════════════ MARKS ═══════════════════════════ #}
+{% if tab == 'marks' %}
+{% if not assessments %}
+  <div class="panel"><p class="empty-line" style="padding:1rem 0">
+    Set some work first, then come back here to enter marks.</p></div>
+{% else %}
+<div style="margin-bottom:1rem">
+  <a class="btn btn-outline" href="{{ url_for('teacher.marksheet_export', cid=course.id) }}">
+    Export marksheet CSV
+  </a>
+</div>
+{% for a in assessments %}
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <div>
+      <h2 class="panel-title" style="margin:0">{{ a.title }}</h2>
+      <span class="sub">
+        {{ a.kind }} &middot; out of {{ a.max_score }}
+        {% if a.due_date %} &middot; due {{ a.due_date.strftime('%d %b %Y') }}{% endif %}
+      </span>
+    </div>
+  </div>
+  <form method="post" action="{{ url_for('teacher.save_marks', aid=a.id) }}" class="warn-unsaved">
+    <div class="table-responsive">
+      <table class="list-table">
+        <thead><tr><th>Student</th><th>Submission</th>
+                   <th style="width:110px">Score</th><th>Feedback</th></tr></thead>
+        <tbody>
+        {% for s in students %}
+          {% set r = results.get(a.id, {}).get(s.id) %}
+          <tr>
+            <td>
+              {{ s.full_name }}
+              <div class="sub mono">{{ s.username }}</div>
+            </td>
+            <td>
+              {% if r and r.submission_link %}
+                <a href="{{ r.submission_link }}" target="_blank" rel="noopener">Open link</a>
+                <div class="sub">{{ r.submitted_at.strftime('%d %b %H:%M') }}</div>
+              {% elif a.needs_submission %}
+                <span class="pill pill-amber">Not submitted</span>
+              {% else %}
+                <span class="sub">—</span>
+              {% endif %}
+            </td>
+            <td>
+              <input class="form-control mono" name="score_{{ s.id }}"
+                     type="number" step="0.5" min="0" max="{{ a.max_score }}"
+                     value="{{ r.score if r and r.score is not none else '' }}"
+                     placeholder="—">
+            </td>
+            <td>
+              <input class="form-control" name="feedback_{{ s.id }}"
+                     value="{{ r.feedback if r and r.feedback else '' }}"
+                     placeholder="Optional comment for the student">
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div style="padding:1rem 1.15rem">
+      <button class="btn btn-primary">Save marks for this work</button>
+    </div>
   </form>
 </div>
-{% else %}
-<div class="empty-state"><p class="text-muted mb-0">Choose a piece of work above to enter marks.
-  Set new work on the “Work set” tab.</p></div>
+{% endfor %}
 {% endif %}
 {% endif %}
 
-{# ---------------------------------------------------------- notices #}
-{% if tab == 'notices' %}
-<div class="row g-4">
-  <div class="col-lg-5">
-    <div class="panel">
-      <h2 class="panel-title">Tell this class something</h2>
-      <p class="panel-hint">It appears at the top of their page immediately —
-        “Quiz next class”, “Bring your reading pack”, “Thursday's class is cancelled”.</p>
-      <form method="post" action="{{ url_for('teacher.post_notice', course_id=course.id) }}">
-        <div class="mb-3"><label class="form-label">Heading</label>
-          <input class="form-control" name="title" required
-                 placeholder="Quiz next class — units 3 and 4"></div>
-        <div class="mb-3"><label class="form-label">Details</label>
-          <textarea class="form-control" name="body" rows="4"
-                    placeholder="Twenty minutes, no notes. Revise the practice sheet."></textarea></div>
-        <div class="mb-3"><label class="form-label">Take down on</label>
-          <input type="date" class="form-control" name="expires_on">
-          <div class="form-text">Leave blank to keep it until you remove it.</div></div>
-        <label class="form-check mb-3">
-          <input class="form-check-input" type="checkbox" name="is_urgent" value="1">
-          <span class="form-check-label">Urgent — shown in red, at the top</span></label>
-        <button class="btn btn-primary w-100">Post to the class</button>
-      </form>
-    </div>
-  </div>
-  <div class="col-lg-7">
-    <div class="panel">
-      <h2 class="panel-title">Posted <span class="count-pill">{{ notices|length }}</span></h2>
-      {% if notices %}
-        <ul class="notice-list">
-        {% for n in notices %}
-          <li class="notice {% if n.is_urgent %}is-urgent{% endif %} {% if n.is_expired %}row-muted{% endif %}">
-            <div class="notice-meta">
-              <span class="notice-scope">{{ course.course_code }}</span>
-              {% if n.is_urgent %}<span class="notice-tag urgent">Urgent</span>{% endif %}
-              {% if n.is_expired %}<span class="notice-tag">Taken down</span>{% endif %}
-              <span class="ms-auto mono">{{ n.created_at.strftime('%d %b') }}</span>
-            </div>
-            <h3 class="notice-title">{{ n.title }}</h3>
-            {% if n.body %}<p class="notice-body">{{ n.body }}</p>{% endif %}
-            <div class="notice-foot">
-              <span>{% if n.expires_on %}until {{ n.expires_on.strftime('%d %b %Y') }}{% else %}no end date{% endif %}</span>
-              <span class="ms-auto">
-                <form method="post" action="{{ url_for('teacher.delete_notice', notice_id=n.id) }}"
-                      onsubmit="return confirm('Remove this notice?')">
-                  <button class="btn btn-sm btn-link text-danger">Remove</button></form>
-              </span>
-            </div>
-          </li>
-        {% endfor %}
-        </ul>
-      {% else %}<p class="empty-line">Nothing posted to this class yet.</p>{% endif %}
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{# -------------------------------------------------------- materials #}
-{% if tab == 'materials' %}
-<div class="row g-4">
-  <div class="col-lg-5">
-    <div class="panel">
-      <h2 class="panel-title">Share a resource</h2>
-      <p class="panel-hint">A link costs nothing and is always preferred.
-        Uploads are capped at 5 MB and the shared budget is
-        {{ storage.mb }} of {{ storage.hard_mb }} MB.</p>
-      <form method="post" action="{{ url_for('teacher.add_material', course_id=course.id) }}"
-            enctype="multipart/form-data">
-        <div class="mb-3"><label class="form-label">Title</label>
-          <input class="form-control" name="title" placeholder="Week 3 handout — passive voice" required></div>
-        <div class="mb-3"><label class="form-label">Link</label>
-          <input class="form-control" name="external_link" placeholder="https://drive.google.com/…"></div>
-        <div class="mb-3"><label class="form-label">…or upload a file</label>
-          <input type="file" class="form-control" name="file" {% if storage.full %}disabled{% endif %}>
-          {% if storage.full %}<div class="form-text text-danger">Storage is full — use a link.</div>{% endif %}</div>
-        <button class="btn btn-primary w-100">Publish to the course</button>
-      </form>
-    </div>
-  </div>
-  <div class="col-lg-7">
-    <div class="panel p-0">
-      <div class="panel-pad"><h2 class="panel-title mb-0">Published <span class="count-pill">{{ materials|length }}</span></h2></div>
-      <div class="table-responsive">
-        <table class="table align-middle mb-0 list-table">
-          <thead><tr><th>Title</th><th>Type</th><th>Size</th><th>Added</th><th></th></tr></thead>
-          <tbody>
-          {% for m2 in materials %}
-            <tr>
-              <td><a href="{{ url_for('open_material', material_id=m2.id) }}">{{ m2.title }}</a></td>
-              <td class="small">{{ 'Link' if m2.is_link else 'File' }}</td>
-              <td class="mono small">{{ '—' if m2.is_link else human_size(m2.file_size) }}</td>
-              <td class="mono small nowrap">{{ m2.uploaded_at.strftime('%d %b %Y') }}</td>
-              <td class="text-end">
-                <form method="post" action="{{ url_for('teacher.delete_material', material_id=m2.id) }}"
-                      onsubmit="return confirm('Remove this material?')">
-                  <button class="btn btn-sm btn-link text-danger">Remove</button></form>
-              </td>
-            </tr>
-          {% else %}
-            <tr><td colspan="5" class="empty-line p-4">Nothing shared yet.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{# --------------------------------------------------------- students #}
-{% if tab == 'students' %}
+{# ═══════════════════════════ MY SCHEDULE ═══════════════════════════ #}
+{% if tab == 'schedule' %}
 <div class="panel p-0">
-  <div class="panel-pad"><h2 class="panel-title mb-0">Class list <span class="count-pill">{{ students|length }}</span></h2></div>
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">
+      One-to-one classes booked for this course <span class="count-pill">{{ schedules|length }}</span>
+    </h2>
+    <span class="sub">Mark attendance on each session</span>
+  </div>
+  {% if schedules %}
   <div class="table-responsive">
-    <table class="table align-middle mb-0 list-table">
-      <thead><tr><th>Student ID</th><th>Name</th><th>Phone</th>
-        <th class="text-end">Held</th><th class="text-end">Absent</th>
-        <th style="width:140px">Attendance</th><th></th></tr></thead>
+    <table class="list-table">
+      <thead><tr><th>Date</th><th>Time</th><th>Student</th>
+                 <th>Venue</th><th>Status</th><th></th></tr></thead>
       <tbody>
-      {% for s in students %}
-        {% set a = summaries.get(s.id, {}) %}
-        <tr>
-          <td class="mono">{{ s.username }}</td>
-          <td><a href="{{ url_for('admin.student_profile', student_id=s.id) }}">{{ s.full_name }}</a></td>
-          <td class="mono small">{{ s.phone or '—' }}</td>
-          <td class="text-end mono">{{ a.get('held', 0) }}</td>
-          <td class="text-end mono">{{ a.get('absent', 0) }}</td>
-          <td>{{ m.meter(a.get('percent', 0), a.get('held', 0)) }}</td>
-          <td class="text-end">
-            <a class="btn btn-sm btn-outline-dark"
-               href="{{ url_for('admin.student_profile', student_id=s.id) }}">Report</a></td>
-        </tr>
-      {% else %}
-        <tr><td colspan="7" class="empty-line p-4">Nobody is enrolled under you on this course.</td></tr>
+      {% for s in schedules %}
+      <tr>
+        <td class="nowrap">{{ s.date.strftime('%d %b %Y') }}
+          <div class="sub">{{ s.date.strftime('%A') }}</div></td>
+        <td class="nowrap mono">{{ s.start_str }}<div class="sub">{{ s.end_str }}</div></td>
+        <td>{{ s.student.full_name if s.student else '(batch)' }}</td>
+        <td class="sub">{{ s.venue }}</td>
+        <td>{{ m.pill_sched(s.status) }}</td>
+        <td>
+          {% if s.student_id %}
+          <a class="btn btn-xs btn-primary"
+             href="{{ url_for('teacher.mark_schedule_att', sid=s.id) }}">
+            {{ 'Change' if s.status != 'Scheduled' else 'Mark attendance' }}
+          </a>
+          {% endif %}
+        </td>
+      </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+  {% else %}
+  <p class="empty-line">
+    No one-to-one classes are booked against this course.
+    Your batch classes and everything else you teach are on
+    <a href="{{ url_for('teacher.my_schedule') }}">My Schedule</a>.
+  </p>
+  {% endif %}
 </div>
 {% endif %}
+
+{# ═══════════════════════════ MATERIALS ═══════════════════════════ #}
+{% if tab == 'materials' %}
+<div class="form-row cols-2" style="gap:1.25rem">
+  <div class="panel">
+    <h2 class="panel-title">Add material</h2>
+    <p class="panel-hint">
+      Links are best — they cost no storage. File uploads are capped at 5 MB each.
+    </p>
+    <form method="post" action="{{ url_for('teacher.add_material', cid=course.id) }}"
+          enctype="multipart/form-data">
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Title <span class="req">*</span></label>
+        <input class="form-control" name="title" required
+               placeholder="e.g. Cambridge 17 Listening audio">
+      </div>
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Paste a link</label>
+        <input class="form-control" name="link" placeholder="https://drive.google.com/…">
+      </div>
+      <div style="margin-bottom:1rem">
+        <label class="form-label">…or upload a file</label>
+        <input type="file" class="form-control" name="file_upload">
+        <div class="form-hint">Max 5 MB. Use a link for anything bigger.</div>
+      </div>
+      <button class="btn btn-primary">Add material</button>
+    </form>
+  </div>
+
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        Materials <span class="count-pill">{{ materials|length }}</span>
+      </h2>
+    </div>
+    {% if materials %}
+    <div class="table-responsive">
+      <table class="list-table">
+        <thead><tr><th>Title</th><th>Kind</th><th>Added</th><th></th></tr></thead>
+        <tbody>
+        {% for mat in materials %}
+        <tr>
+          <td>
+            <a href="{{ url_for('open_material', mid=mat.id) }}" target="_blank" rel="noopener">
+              {{ mat.title }}
+            </a>
+          </td>
+          <td>
+            {% if mat.is_link %}<span class="pill pill-blue">Link</span>
+            {% else %}<span class="pill pill-gray">File · {{ human_size(mat.file_size) }}</span>{% endif %}
+          </td>
+          <td class="sub nowrap">{{ mat.uploaded_at.strftime('%d %b %Y') }}</td>
+          <td>
+            <form method="post" action="{{ url_for('teacher.delete_material', mid=mat.id) }}"
+                  onsubmit="return confirm('Delete this material?')">
+              <button class="btn btn-xs btn-link" style="color:var(--red)">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-line">No materials yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# ═══════════════════════════ NOTICES ═══════════════════════════ #}
+{% if tab == 'notices' %}
+<div class="form-row cols-2" style="gap:1.25rem">
+  <div class="panel">
+    <h2 class="panel-title">Post a notice to this class</h2>
+    <form method="post" action="{{ url_for('teacher.post_notice', cid=course.id) }}">
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Title <span class="req">*</span></label>
+        <input class="form-control" name="title" required
+               placeholder="e.g. Bring your speaking notes on Sunday">
+      </div>
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Message</label>
+        <textarea class="form-control" name="body" rows="4"></textarea>
+      </div>
+      <div style="margin-bottom:1rem;max-width:220px">
+        <label class="form-label">Stop showing on</label>
+        <input type="date" class="form-control" name="expires_on">
+      </div>
+      <label style="display:flex;align-items:center;gap:.4rem;font-size:.85rem;
+                    margin-bottom:1rem;color:var(--red);font-weight:600">
+        <input type="checkbox" name="is_urgent" value="1"> Mark as urgent
+      </label>
+      <button class="btn btn-primary">Post notice</button>
+    </form>
+  </div>
+
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+      <h2 class="panel-title" style="margin:0">
+        Posted <span class="count-pill">{{ notices|length }}</span>
+      </h2>
+    </div>
+    {% if notices %}
+    <ul class="notice-list">
+      {% for n in notices %}
+      <li class="notice {{ 'is-urgent' if n.is_urgent }}">
+        <div class="notice-meta">
+          {% if n.is_urgent %}<span class="notice-tag urgent">Urgent</span>{% endif %}
+          <span>{{ n.created_at.strftime('%d %b %Y') }}</span>
+          {% if n.is_expired %}<span class="pill pill-gray">Expired</span>{% endif %}
+        </div>
+        <div class="notice-title">{{ n.title }}</div>
+        {% if n.body %}<div class="notice-body">{{ n.body }}</div>{% endif %}
+        <form method="post" action="{{ url_for('teacher.delete_notice', nid=n.id) }}"
+              onsubmit="return confirm('Delete this notice?')">
+          <button class="btn btn-xs btn-link" style="color:var(--red)">Delete</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty-line">No notices posted for this class.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{{ ab.course_about_script() }}
 {% endblock %}

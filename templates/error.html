@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ code }} · {{ org_name }}{% endblock %}
+{% block title %}{{ code }} Error{% endblock %}
 {% block content %}
-<div class="empty-state my-5">
-  <h1 class="display-6">{{ code }}</h1>
-  <p class="text-muted">{{ message }}</p>
-  <a class="btn btn-primary" href="{{ url_for('home') }}">Back to your dashboard</a>
+<div style="text-align:center;padding:4rem 1rem">
+  <div style="font-size:4rem;font-weight:800;color:var(--red)">{{ code }}</div>
+  <div style="font-size:1.15rem;color:var(--ink-soft);margin:.5rem 0 1.5rem">{{ message }}</div>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-dark">Go to dashboard</a>
 </div>
 {% endblock %}

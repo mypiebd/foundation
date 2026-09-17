@@ -1,53 +1,51 @@
-{% macro meter(percent, held=1) -%}
-  {% if held %}
-    <div class="meter"><span style="width: {{ percent }}%" class="{% if percent < 75 %}low{% endif %}"></span></div>
-    <span class="meter-value {% if percent < 75 %}text-warn{% endif %}">{{ percent }}%</span>
-  {% else %}
-    <span class="meter-value text-muted">no classes</span>
-  {% endif %}
-{%- endmacro %}
-
-{% macro code(course) -%}
-  <a class="code-chip" href="{{ url_for('teacher.course', course_id=course.id) if current_user.is_teacher else url_for('admin.course_detail', course_id=course.id) if current_user.is_admin else '#' }}">{{ course.course_code }}</a>
-{%- endmacro %}
-
-{% macro plain_code(course) -%}
-  <span class="code-chip">{{ course.course_code }}</span>
-{%- endmacro %}
-
-{% macro status_pill(user) -%}
-  {% if user.status == 'ACTIVE' %}<span class="pill pill-on">Active</span>
-  {% else %}<span class="pill pill-off">Archived</span>{% endif %}
-{%- endmacro %}
-
-{% macro term_filter(terms, window_label, extra={}) -%}
-<form class="term-filter" method="get">
-  {% for k, v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
-  <label class="form-label">Period</label>
-  <select class="form-select form-select-sm" name="term_id" onchange="this.form.submit()">
-    {% for t in terms %}
-      <option value="{{ t.id }}" {% if window_label == t.name %}selected{% endif %}>{{ t.name }}</option>
-    {% endfor %}
-    <option value="all" {% if window_label == 'All time' %}selected{% endif %}>All time</option>
-  </select>
-</form>
-{%- endmacro %}
-
-{% macro pager(page, endpoint, args={}) -%}
-{% if page.pages > 1 %}
-<nav class="pager">
-  <span class="pager-count">{{ page.total }} result{{ '' if page.total == 1 else 's' }} ·
-    page {{ page.page }} of {{ page.pages }}</span>
-  <span class="pager-links">
-    {% if page.has_prev %}
-      <a href="{{ url_for(endpoint, page=page.prev_num, **args) }}">Previous</a>
-    {% endif %}
-    {% if page.has_next %}
-      <a href="{{ url_for(endpoint, page=page.next_num, **args) }}">Next</a>
-    {% endif %}
-  </span>
-</nav>
+{% macro meter(percent, held) %}
+{% if held == 0 %}
+  <span class="sub">No classes</span>
 {% else %}
-<nav class="pager"><span class="pager-count">{{ page.total }} result{{ '' if page.total == 1 else 's' }}</span></nav>
+  <div class="meter">
+    <div class="meter-bar">
+      <div class="meter-fill {{ 'is-low' if percent < 75 else ('is-warn' if percent < 85 else '') }}"
+           style="width:{{ percent }}%"></div>
+    </div>
+    <span class="meter-value {{ 'is-low' if percent < 75 else ('is-warn' if percent < 85 else '') }}">
+      {{ percent }}%
+    </span>
+  </div>
 {% endif %}
-{%- endmacro %}
+{% endmacro %}
+
+{% macro pill_status(status) %}
+{% if status == 'ACTIVE' %}<span class="pill pill-green">Active</span>
+{% elif status == 'ARCHIVED' %}<span class="pill pill-gray">Archived</span>
+{% else %}<span class="pill pill-gray">{{ status }}</span>
+{% endif %}
+{% endmacro %}
+
+{% macro pill_sched(status) %}
+{% if status == 'Scheduled' %}<span class="pill pill-blue">Scheduled</span>
+{% elif status == 'Completed' %}<span class="pill pill-green">Completed</span>
+{% elif status == 'Cancelled' %}<span class="pill pill-gray">Cancelled</span>
+{% elif status == 'Student Absent' %}<span class="pill pill-amber">Student Absent</span>
+{% elif status == 'Teacher Absent' %}<span class="pill pill-red">Teacher Absent</span>
+{% else %}<span class="pill pill-gray">{{ status }}</span>
+{% endif %}
+{% endmacro %}
+
+{% macro pager(pagination, endpoint, args={}) %}
+{% if pagination.pages > 1 %}
+<div class="pager">
+  <a class="pager-btn {{ 'disabled' if not pagination.has_prev }}"
+     href="{{ url_for(endpoint, page=pagination.prev_num, **args) if pagination.has_prev else '#' }}">&laquo;</a>
+  {% for p in pagination.iter_pages() %}
+    {% if p %}
+      <a class="pager-btn {{ 'active' if p == pagination.page }}"
+         href="{{ url_for(endpoint, page=p, **args) }}">{{ p }}</a>
+    {% else %}
+      <span class="pager-btn disabled">&hellip;</span>
+    {% endif %}
+  {% endfor %}
+  <a class="pager-btn {{ 'disabled' if not pagination.has_next }}"
+     href="{{ url_for(endpoint, page=pagination.next_num, **args) if pagination.has_next else '#' }}">&raquo;</a>
+</div>
+{% endif %}
+{% endmacro %}

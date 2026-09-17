@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}{{ cls.task }} · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('teacher.my_schedule', view='day',
+       date=cls.date.isoformat()) }}">&larr; Back to that day</a></p>
+    <h1 class="page-title">{{ cls.task or 'Class' }}</h1>
+    <p class="page-sub">
+      {{ cls.date.strftime('%A %d %B %Y') }} &middot;
+      {{ cls.start_str }} to {{ cls.end_str }} &middot;
+      {{ cls.venue }}
+      {% if cls.course %} &middot; {{ cls.course.course_code }}{% endif %}
+      &middot; {{ m.pill_sched(cls.status) }}
+    </p>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  <div>Mark who came and write what you taught — one save does both.</div>
+</div>
+
+<form method="post" class="warn-unsaved">
+<div class="rec-split">
+
+  <!-- Register -->
+  <div class="panel p-0">
+    <div class="panel-head" style="padding:1rem 1.15rem .6rem">
+      <h2 class="panel-title" style="margin:0">
+        Who came <span class="count-pill">{{ students|length }}</span></h2>
+      {% if students %}
+      <div style="display:flex;gap:.3rem">
+        <button type="button" class="btn btn-xs btn-outline" data-all="Present">All present</button>
+        <button type="button" class="btn btn-xs btn-outline" data-all="Absent">All absent</button>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if students %}
+    <div class="table-responsive">
+      <table class="list-table register">
+        <thead><tr><th>Student</th>
+          <th style="text-align:center;width:80px">Present</th>
+          <th style="text-align:center;width:70px">Late</th>
+          <th style="text-align:center;width:80px">Absent</th></tr></thead>
+        <tbody>
+        {% for s in students %}
+          {% set cur = existing.get(s.id) %}
+          <tr>
+            <td><div class="td-name">{{ s.full_name }}</div>
+                <div class="sub mono">{{ s.username }}</div></td>
+            {% for st in ['Present','Late','Absent'] %}
+            <td style="text-align:center">
+              <input type="radio" name="status_{{ s.id }}" value="{{ st }}"
+                     class="att-radio"
+                     {{ 'checked' if cur and cur.status == st }}
+                     style="width:18px;height:18px;cursor:pointer">
+            </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="padding:1.2rem 1.15rem">
+      <p class="sub" style="margin:0 0 .8rem">
+        Nobody is attached to this class yet, so there is no register.
+      </p>
+      <label class="form-label">Mark the class as</label>
+      <select class="form-select" name="class_status" style="max-width:230px">
+        {% for s in ['Completed','Cancelled','Teacher Absent'] %}
+          <option {{ 'selected' if cls.status == s }}>{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Lesson notes -->
+  <div class="panel">
+    <h3 class="form-section-title">What you taught</h3>
+    {% if not cls.course_id %}
+    <div class="alert alert-warning" style="margin-bottom:.8rem">
+      <div>This class has no subject attached, so notes cannot be saved against
+        one. Ask the office to link it to a subject.</div>
+    </div>
+    {% endif %}
+    <div style="margin-bottom:.85rem">
+      <label class="form-label">Topic <span class="req">*</span></label>
+      <input class="form-control" name="topic_taught"
+             value="{{ log.topic_taught if log else '' }}"
+             placeholder="e.g. Writing Task 2 — opinion essays"
+             {{ 'disabled' if not cls.course_id }}>
+      <div class="form-hint">Students see this, so a line of substance helps.</div>
+    </div>
+    <div style="margin-bottom:.85rem">
+      <label class="form-label">How it went</label>
+      <textarea class="form-control" name="summary_notes" rows="4"
+        placeholder="What was covered, anything to pick up next time…"
+        {{ 'disabled' if not cls.course_id }}>{{ log.summary_notes if log else '' }}</textarea>
+    </div>
+    <div>
+      <label class="form-label">Homework set</label>
+      <textarea class="form-control" name="homework" rows="3"
+        placeholder="e.g. Cambridge 17 Test 2 Writing Task 2"
+        {{ 'disabled' if not cls.course_id }}>{{ log.homework if log else '' }}</textarea>
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;gap:.5rem;margin-top:1.1rem">
+  <button class="btn btn-primary">Save the class</button>
+  <a class="btn btn-link" href="{{ url_for('teacher.my_schedule', view='day',
+     date=cls.date.isoformat()) }}">Cancel</a>
+</div>
+</form>
+
+<style>
+.rec-split{display:grid;grid-template-columns:1fr 1fr;gap:1.1rem;align-items:start}
+@media(max-width:900px){.rec-split{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('[data-all]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    document.querySelectorAll('.att-radio').forEach(function (r) {
+      if (r.value === b.dataset.all) r.checked = true;
+    });
+  });
+});
+</script>
+{% endblock %}

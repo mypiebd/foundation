@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Classes · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Classes</h1>
+    <p class="page-sub">
+      Every batch and one-to-one arrangement. Change the times, pause it,
+      or stop it — the whole run at once.
+    </p>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-primary" href="{{ url_for('admin.class_new') }}">+ Set up a class</a>
+    <form method="post" action="{{ url_for('admin.classes_top_up') }}" style="display:inline">
+      <select name="months" class="form-select" style="width:auto;display:inline-block">
+        <option value="3">3 months</option>
+        <option value="6" selected>6 months</option>
+        <option value="12">12 months</option>
+      </select>
+      <button class="btn btn-outline">Build ahead</button>
+    </form>
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat-card"><div class="stat-value">{{ totals.batch }}</div>
+    <div class="stat-label">Batch classes</div></div>
+  <div class="stat-card"><div class="stat-value">{{ totals.one }}</div>
+    <div class="stat-label">One-to-one</div></div>
+  <div class="stat-card"><div class="stat-value" style="color:var(--ok)">{{ totals.active }}</div>
+    <div class="stat-label">Running</div></div>
+  <div class="stat-card"><div class="stat-value" style="color:var(--warn)">{{ totals.paused }}</div>
+    <div class="stat-label">Paused</div></div>
+  <div class="stat-card"><div class="stat-value" style="color:var(--ink-soft)">{{ totals.stopped }}</div>
+    <div class="stat-label">Stopped</div></div>
+</div>
+
+<div class="panel p-0">
+  <form class="filter-bar" method="get">
+    <select class="form-select" name="course_id" onchange="this.form.submit()">
+      <option value="">All subjects</option>
+      {% for c in courses %}
+        <option value="{{ c.id }}" {{ 'selected' if course_id == c.id }}>{{ c.course_code }}</option>
+      {% endfor %}
+    </select>
+    <select class="form-select" name="kind" onchange="this.form.submit()">
+      <option value="">Batch and 1-on-1</option>
+      <option value="Batch"  {{ 'selected' if kind == 'Batch' }}>Batch only</option>
+      <option value="1-on-1" {{ 'selected' if kind == '1-on-1' }}>One-to-one only</option>
+    </select>
+    <select class="form-select" name="status" onchange="this.form.submit()">
+      <option value="">Any status</option>
+      <option value="Active"  {{ 'selected' if status == 'Active' }}>Running</option>
+      <option value="Paused"  {{ 'selected' if status == 'Paused' }}>Paused</option>
+      <option value="Stopped" {{ 'selected' if status == 'Stopped' }}>Stopped</option>
+    </select>
+    <input class="form-control fb-search" id="clsSearch" placeholder="Search…" autocomplete="off">
+    <span class="sub" style="margin-left:auto">{{ rows|length }} shown</span>
+  </form>
+
+  <div class="table-responsive">
+    <table class="list-table" id="clsTable">
+      <thead>
+        <tr><th>Class</th><th>Subject</th><th>Type</th><th>Teacher</th>
+            <th>When it runs</th><th>Students</th><th>Ahead</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        {% set g = r.g %}
+        <tr>
+          <td class="clip" title="{{ g.name }}">
+            <a href="{{ url_for('admin.class_detail', gid=g.id) }}">{{ g.name }}</a>
+          </td>
+          <td>{% if g.course %}<span class="pill pill-navy">{{ g.course.course_code }}</span>
+              {% else %}<span class="sub">—</span>{% endif %}</td>
+          <td>{% if g.kind == 'Batch' %}<span class="pill pill-green">Batch</span>
+              {% else %}<span class="pill pill-blue">1-on-1</span>{% endif %}</td>
+          <td class="sub">{{ g.teacher.full_name if g.teacher else '—' }}</td>
+          <td style="font-size:.82rem;line-height:1.5">
+            {% for line in g.slot_lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+          </td>
+          <td class="mono">{{ g.student_count }}</td>
+          <td class="mono">{{ r.c.upcoming }}</td>
+          <td>
+            {% if g.status == 'Active' %}
+              <span class="pill pill-green">Running</span>
+              {% if g.is_indefinite %}<div class="sub">no end date</div>{% endif %}
+            {% elif g.status == 'Paused' %}<span class="pill pill-amber">Paused</span>
+            {% else %}<span class="pill pill-gray">Stopped</span>{% endif %}
+          </td>
+          <td><a class="btn btn-xs btn-outline"
+                 href="{{ url_for('admin.class_detail', gid=g.id) }}">Manage</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9"><div class="empty-line">
+          No classes yet.
+          <a href="{{ url_for('admin.class_new') }}">Set up your first one</a>.
+        </div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>tableSearch('clsSearch','clsTable');</script>{% endblock %}

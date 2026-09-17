@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ student.full_name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('admin.student_profile', sid=student.id) }}">&larr; Back to profile</a></p>
+    <h1 class="page-title">Edit student</h1>
+    <p class="page-sub"><span class="mono">{{ student.username }}</span></p>
+  </div>
+</div>
+
+<div style="max-width:640px">
+<form method="post" class="warn-unsaved">
+  <div class="panel" style="margin-bottom:1.25rem">
+    <h3 class="form-section-title">Details</h3>
+    <div class="form-row cols-2" style="margin-bottom:1rem">
+      <div>
+        <label class="form-label">Full name <span class="req">*</span></label>
+        <input class="form-control" name="full_name" value="{{ student.full_name }}" required>
+      </div>
+      <div>
+        <label class="form-label">Phone</label>
+        <input class="form-control" name="phone" value="{{ student.phone or '' }}">
+      </div>
+    </div>
+    <div class="form-row cols-2" style="margin-bottom:1rem">
+      <div>
+        <label class="form-label">Email</label>
+        <input type="email" class="form-control" name="email" value="{{ student.email or '' }}">
+      </div>
+      <div>
+        <label class="form-label">Branch</label>
+        <select class="form-select" name="branch">
+          <option value="">—</option>
+          {% for b in BRANCHES %}
+            <option {{ 'selected' if student.branch == b }}>{{ b }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-row cols-2">
+      <div>
+      </div>
+      <div>
+        <label class="form-label">Status</label>
+        <select class="form-select" name="status">
+          <option value="ACTIVE"   {{ 'selected' if student.status == 'ACTIVE' }}>Active</option>
+          <option value="ARCHIVED" {{ 'selected' if student.status == 'ARCHIVED' }}>Archived</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:1.25rem">
+    <h3 class="form-section-title">Password</h3>
+    <div style="max-width:280px">
+      <label class="form-label">Set a new password</label>
+      <input class="form-control" name="new_password" type="text"
+             placeholder="Leave blank to keep current" autocomplete="off">
+      <div class="form-hint">
+        {% if student.initial_password %}
+          Current initial password: <strong class="mono">{{ student.initial_password }}</strong>
+        {% else %}
+          The student has changed their own password.
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:.5rem">
+    <button class="btn btn-primary">Save changes</button>
+    <a class="btn btn-link" href="{{ url_for('admin.student_profile', sid=student.id) }}">Cancel</a>
+  </div>
+</form>
+</div>
+{% endblock %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}Mark attendance · PIE Scheduler{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="ph-back">
+      <a href="{{ url_for('teacher.course', cid=cls.course_id, tab='schedule')
+                  if cls.course_id else url_for('teacher.my_courses') }}">&larr; Back</a>
+    </p>
+    <h1 class="page-title">Mark attendance</h1>
+    <p class="page-sub">
+      {{ cls.date.strftime('%A, %d %B %Y') }}
+      &middot; {{ cls.start_str }} → {{ cls.end_str }}
+      &middot; {{ cls.venue }}
+    </p>
+  </div>
+</div>
+
+<div style="max-width:520px">
+  <div class="panel" style="margin-bottom:1.25rem">
+    <div style="display:flex;align-items:center;gap:1rem">
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">
+          {{ cls.student.full_name if cls.student else '(no student)' }}
+        </div>
+        <div class="sub mono">{{ cls.student.username if cls.student else '' }}</div>
+      </div>
+      <div style="margin-left:auto">{{ m.pill_sched(cls.status) }}</div>
+    </div>
+    {% if cls.task %}
+    <p class="sub" style="margin:.6rem 0 0">{{ cls.task }}</p>
+    {% endif %}
+  </div>
+
+  {% if existing %}
+  <div class="alert alert-info">
+    Already marked as <strong>{{ existing.status }}</strong>
+    on {{ existing.marked_at.strftime('%d %b %Y at %H:%M') }}. You can change it below.
+  </div>
+  {% endif %}
+
+  <form method="post" class="panel">
+    <div style="margin-bottom:1.1rem">
+      <label class="form-label">Attendance</label>
+      <div style="display:flex;flex-direction:column;gap:.5rem">
+        {% set options = [
+            ('Present',        'Present',                      'Class counted as taught'),
+            ('Late',           'Late',                         'Counted as attended'),
+            ('Absent',         'Absent (no notice)',           'Class is deducted'),
+            ('Teacher Absent', 'Teacher was absent',           'Class is NOT deducted'),
+            ('Cancelled',      'Cancelled',                    'Class is NOT deducted')
+        ] %}
+        {% for val, label, note in options %}
+        <label style="display:flex;align-items:flex-start;gap:.55rem;padding:.6rem .75rem;
+                      border:1.5px solid var(--line);border-radius:.3rem;cursor:pointer;background:#fff">
+          <input type="radio" name="status" value="{{ val }}"
+                 {{ 'checked' if (existing and existing.status == val) or (not existing and val == 'Present') }}
+                 style="margin-top:.15rem">
+          <span>
+            <span style="font-weight:600;font-size:.9rem">{{ label }}</span>
+            <span class="sub" style="display:block">{{ note }}</span>
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div style="margin-bottom:1.25rem">
+      <label class="form-label">Remarks / feedback</label>
+      <textarea class="form-control" name="remarks" rows="3"
+        placeholder="What was covered, homework set, reason for absence…">{{ existing.remarks if existing else '' }}</textarea>
+      <div class="form-hint">The student sees this on their dashboard.</div>
+    </div>
+
+    <button class="btn btn-primary">Save attendance</button>
+  </form>
+</div>
+{% endblock %}

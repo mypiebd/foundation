@@ -1,66 +1,97 @@
 {% extends "base.html" %}
-{% import "partials/macros.html" as m %}
-{% block title %}Courses · {{ org_name }}{% endblock %}
+{% block title %}Courses · PIE Scheduler{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><h1 class="page-title">Courses</h1>
-    <p class="page-sub">Open a course to enrol students and see its assessments.</p></div>
+  <div>
+    <h1 class="page-title">Courses</h1>
+    <p class="page-sub">{{ courses|length }} course(s). Open one to enrol students and set the teacher.</p>
+  </div>
   <div class="head-actions">
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCourse">Create a course</button>
-    <a class="btn btn-outline-dark" href="{{ url_for('admin.courses', archived='0' if show_archived else '1') }}">
-      {{ 'Hide archived' if show_archived else 'Show archived' }}</a>
+    <button class="btn btn-primary" onclick="document.getElementById('addCourseModal').style.display='flex'">
+      + New course
+    </button>
+    <a class="btn btn-outline"
+       href="{{ url_for('admin.courses', archived='0' if show_archived else '1') }}">
+      {{ 'Hide archived' if show_archived else 'Show archived' }}
+    </a>
   </div>
 </div>
 
 <div class="panel p-0">
   <div class="table-responsive">
-    <table class="table align-middle mb-0 list-table">
-      <thead><tr><th>Code</th><th>Course</th><th>Branch</th><th>Teachers</th>
-                 <th class="text-end">Students</th><th class="text-end">Assessments</th><th></th></tr></thead>
+    <table class="list-table">
+      <thead>
+        <tr><th>Code</th><th>Course name</th><th>Branch</th>
+            <th>Students</th><th>Teacher</th><th></th></tr>
+      </thead>
       <tbody>
-      {% for c in items %}
-        <tr {% if c.is_archived %}class="row-muted"{% endif %}>
-          <td>{{ m.plain_code(c) }}</td>
-          <td><a href="{{ url_for('admin.course_detail', course_id=c.id) }}">{{ c.course_name }}</a>
-            {% if c.is_archived %}<span class="pill pill-off">Archived</span>{% endif %}
-            <div class="sub">{{ c.description or '—' }}</div></td>
-          <td class="small">{{ c.branch or '—' }}</td>
-          <td class="small">{{ stats[c.id].teachers|join(', ') if stats[c.id].teachers else '—' }}</td>
-          <td class="text-end mono">{{ stats[c.id].students }}</td>
-          <td class="text-end mono">{{ stats[c.id].assessments }}</td>
-          <td class="text-end nowrap">
-            <a class="btn btn-sm btn-outline-dark" href="{{ url_for('admin.course_detail', course_id=c.id) }}">Open</a>
-            <form class="d-inline" method="post" action="{{ url_for('admin.archive_course', course_id=c.id) }}">
-              <button class="btn btn-sm btn-link">{{ 'Restore' if c.is_archived else 'Archive' }}</button></form>
+      {% for c in courses %}
+        {% set count = c.assignments|length %}
+        {% set first_teacher = c.assignments[0].teacher if count else None %}
+        <tr>
+          <td><span class="pill pill-navy">{{ c.course_code }}</span></td>
+          <td>
+            <a href="{{ url_for('admin.course_detail', cid=c.id) }}">{{ c.course_name }}</a>
+            {% if c.is_archived %}<span class="pill pill-gray">Archived</span>{% endif %}
+            {% if c.description %}<div class="sub">{{ c.description|truncate(70) }}</div>{% endif %}
+          </td>
+          <td class="sub">{{ c.branch or '—' }}</td>
+          <td class="mono">{{ count }}</td>
+          <td class="sub">{{ first_teacher.full_name if first_teacher else '— not assigned —' }}</td>
+          <td class="nowrap">
+            <a class="btn btn-xs btn-outline"
+               href="{{ url_for('admin.course_detail', cid=c.id) }}">Open</a>
+            <form method="post" action="{{ url_for('admin.archive_course', cid=c.id) }}"
+                  style="display:inline">
+              <button class="btn btn-xs btn-link">
+                {{ 'Restore' if c.is_archived else 'Archive' }}
+              </button>
+            </form>
           </td>
         </tr>
       {% else %}
-        <tr><td colspan="7" class="empty-line p-4">No courses yet.</td></tr>
+        <tr><td colspan="6" class="empty-line">
+          No courses yet. Create one for each subject you teach.</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
 
-<div class="modal fade" id="addCourse" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
-    <form class="modal-content" method="post" action="{{ url_for('admin.create_course') }}">
-      <div class="modal-header"><h5 class="modal-title">Create a course</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-      <div class="modal-body">
-        <div class="mb-3"><label class="form-label">Course code</label>
-          <input class="form-control mono" name="course_code" placeholder="EAP101" required></div>
-        <div class="mb-3"><label class="form-label">Course name</label>
-          <input class="form-control" name="course_name" required></div>
-        <div class="mb-3"><label class="form-label">Branch</label>
-          <select class="form-select" name="branch"><option value="">—</option>
-            {% for b in BRANCHES %}<option value="{{ b }}">{{ b }}</option>{% endfor %}</select></div>
-        <div><label class="form-label">Description</label>
-          <textarea class="form-control" name="description" rows="3"></textarea></div>
+<!-- Add course modal -->
+<div id="addCourseModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center">
+  <div class="panel" style="width:100%;max-width:480px;margin:1rem">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h3 class="panel-title" style="margin:0">New course</h3>
+      <button type="button" class="btn btn-link"
+              onclick="document.getElementById('addCourseModal').style.display='none'">✕</button>
+    </div>
+    <form method="post" action="{{ url_for('admin.create_course') }}">
+      <div class="form-row cols-2" style="margin-bottom:.85rem">
+        <div>
+          <label class="form-label">Code <span class="req">*</span></label>
+          <input class="form-control mono" name="course_code" required
+                 placeholder="IELTS-M" style="text-transform:uppercase">
+        </div>
+        <div>
+          <label class="form-label">Branch</label>
+          <select class="form-select" name="branch">
+            <option value="">—</option>
+            {% for b in BRANCHES %}<option>{{ b }}</option>{% endfor %}
+          </select>
+        </div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary">Create course</button></div>
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Course name <span class="req">*</span></label>
+        <input class="form-control" name="course_name" required
+               placeholder="IELTS Morning Batch">
+      </div>
+      <div style="margin-bottom:1rem">
+        <label class="form-label">Description</label>
+        <textarea class="form-control" name="description" rows="2"
+                  placeholder="Optional"></textarea>
+      </div>
+      <button class="btn btn-primary">Create course</button>
     </form>
   </div>
 </div>

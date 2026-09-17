@@ -1,0 +1,109 @@
+{% macro course_about(course, classes=None, collapsed=6) %}
+{% if course.has_detail or classes %}
+<div class="panel about" style="margin-bottom:1.25rem">
+  <div class="about-head">
+    <div>
+      <span class="pill pill-navy">{{ course.course_code }}</span>
+      <h2 class="about-title">{{ course.course_name }}</h2>
+    </div>
+  </div>
+
+  {% if course.facts %}
+  <div class="facts">
+    {% for label, value in course.facts %}
+      <div class="fact"><span>{{ label }}</span><b>{{ value }}</b></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if course.description %}
+  <div class="about-body">
+    {% for para in course.description.split('\n\n') %}
+      {% if para.strip() %}<p>{{ para.strip() }}</p>{% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if course.assessment_lines %}
+  <h3 class="about-h">How it is assessed</h3>
+  <ul class="about-list">
+    {% for line in course.assessment_lines %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if course.outcome_lines %}
+  <h3 class="about-h">What you will learn</h3>
+  <ul class="about-list" id="loList-{{ course.id }}">
+    {% for line in course.outcome_lines %}
+      <li{% if loop.index0 >= collapsed %} class="lo-more" style="display:none"{% endif %}>{{ line }}</li>
+    {% endfor %}
+  </ul>
+  {% if course.outcome_lines|length > collapsed %}
+  <button type="button" class="btn btn-link btn-sm lo-toggle"
+          data-target="loList-{{ course.id }}"
+          data-more="Show all {{ course.outcome_lines|length }} topics"
+          data-less="Show fewer">Show all {{ course.outcome_lines|length }} topics</button>
+  {% endif %}
+  {% endif %}
+
+  {% if classes %}
+  <h3 class="about-h">How this subject is taught</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Class</th><th>Type</th><th>Teacher</th><th>When</th><th>Students</th></tr></thead>
+      <tbody>
+      {% for g in classes %}
+      <tr>
+        <td>{{ g.name }}</td>
+        <td>{% if g.kind == 'Batch' %}<span class="pill pill-green">Batch</span>
+            {% else %}<span class="pill pill-blue">One-to-one</span>{% endif %}</td>
+        <td class="sub">{{ g.teacher.full_name if g.teacher else '—' }}</td>
+        <td style="font-size:.82rem;line-height:1.5">
+          {% for l in g.slot_lines %}{{ l }}{% if not loop.last %}<br>{% endif %}{% endfor %}
+        </td>
+        <td class="mono">{{ g.student_count }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="margin:.5rem 0 0">
+    A subject can run as a batch and one-to-one at the same time. A student may
+    take both — attendance and marks stay as one record either way.
+  </p>
+  {% endif %}
+</div>
+
+<style>
+.about-head{display:flex;justify-content:space-between;align-items:flex-start;
+  gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}
+.about-title{font-size:1.15rem;font-weight:600;margin:.3rem 0 0}
+.facts{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:.25rem;
+  padding:.35rem .7rem;font-size:.8rem;line-height:1.3}
+.fact span{display:block;font-size:.68rem;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-soft);font-weight:700}
+.about-body p{margin:0 0 .6rem;font-size:.92rem;max-width:74ch;color:var(--ink2)}
+.about-h{font-family:"Segoe UI",system-ui,sans-serif;font-size:.85rem;
+  font-weight:700;margin:1.1rem 0 .4rem;padding-bottom:.3rem;
+  border-bottom:1px solid var(--line)}
+.about-list{margin:0;padding-left:1.2rem;font-size:.88rem;color:var(--ink2);
+  max-width:74ch}
+.about-list li{margin-bottom:.2rem}
+</style>
+{% endif %}
+{% endmacro %}
+
+{% macro course_about_script() %}
+<script>
+document.querySelectorAll('.lo-toggle').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var list = document.getElementById(b.dataset.target);
+    var hidden = list.querySelectorAll('.lo-more');
+    var open = hidden.length && hidden[0].style.display !== 'none';
+    hidden.forEach(function (li) { li.style.display = open ? 'none' : 'list-item'; });
+    b.textContent = open ? b.dataset.more : b.dataset.less;
+  });
+});
+</script>
+{% endmacro %}

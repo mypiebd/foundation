@@ -1,103 +1,170 @@
 {% extends "base.html" %}
-{% import "partials/macros.html" as m %}
-{% block title %}{{ course.course_code }} · {{ org_name }}{% endblock %}
+{% import "partials/course_about.html" as ab %}
+{% block title %}{{ course.course_code }} · PIE Scheduler{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <p class="ph-back"><a href="{{ url_for('admin.courses') }}">&larr; All courses</a></p>
-    <h1 class="page-title">{{ course.course_code }} — {{ course.course_name }}</h1>
-    <p class="page-sub">{{ course.branch or 'All branches' }} · {{ enrolled|length }} enrolled ·
-      attendance covers {{ window_label|lower }}.</p>
+    <h1 class="page-title">
+      <span class="pill pill-navy" style="font-size:.9rem;vertical-align:middle">{{ course.course_code }}</span>
+      {{ course.course_name }}
+    </h1>
+    <p class="page-sub">
+      {{ assignments|length }} student(s) enrolled
+      {% if course.branch %} &middot; {{ course.branch }}{% endif %}
+      {% if course.is_archived %} &middot; <span class="pill pill-gray">Archived</span>{% endif %}
+    </p>
   </div>
   <div class="head-actions">
-    <a class="btn btn-outline-dark" href="{{ url_for('admin.attendance_export', course_id=course.id, **request.args) }}">Attendance CSV</a>
-    <a class="btn btn-outline-dark" href="{{ url_for('admin.marksheet_export', course_id=course.id) }}">Mark sheet CSV</a>
+    <a class="btn btn-primary"
+       href="{{ url_for('admin.edit_course', cid=course.id) }}">Edit subject</a>
   </div>
 </div>
 
-<div class="row g-4">
-  <div class="col-lg-5">
-    <div class="panel">
-      <h2 class="panel-title">Enrol students</h2>
-      <p class="panel-hint">Pick the teacher, then individual students or a whole batch.
-        Enrolling someone already on the course moves them to the chosen teacher.</p>
-      <form method="post" action="{{ url_for('admin.enrol', course_id=course.id) }}">
-        <div class="mb-3"><label class="form-label">Teacher</label>
-          <select class="form-select" name="teacher_id" required>
-            <option value="">Choose a teacher</option>
-            {% for t in teachers %}<option value="{{ t.id }}">{{ t.full_name }}</option>{% endfor %}
-          </select></div>
-        <div class="mb-3"><label class="form-label">Whole batch</label>
-          <select class="form-select" name="batch_id">
-            <option value="">—</option>
-            {% for b in batches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
-          </select></div>
-        <div class="mb-3"><label class="form-label">Or pick students</label>
-          <select class="form-select" name="student_ids" multiple size="10" data-filterable>
-            {% for s in candidates %}
-              <option value="{{ s.id }}">{{ s.full_name }} — {{ s.username }}{% if s.branch %} ({{ s.branch }}){% endif %}</option>
-            {% endfor %}
-          </select>
-          <div class="form-text">Ctrl or Cmd to pick several.</div></div>
-        <button class="btn btn-primary w-100">Enrol</button>
-      </form>
-    </div>
-  </div>
+{{ ab.course_about(course, classes=course_classes) }}
 
-  <div class="col-lg-7">
-    <form method="post" action="{{ url_for('admin.unenrol', course_id=course.id) }}">
-      <div class="panel p-0">
-        <div class="bulk-bar">
-          <span class="selected-count" data-selected-count>No one selected</span>
-          <button class="btn btn-sm btn-outline-danger"
-                  onclick="return confirm('Remove the selected students from this course? Their attendance and marks are kept.')">
-            Remove from course</button>
-        </div>
-        <div class="table-responsive scroll-box">
-          <table class="table align-middle mb-0 list-table">
-            <thead><tr>
-              <th class="tick"><input class="form-check-input" type="checkbox" data-select-all></th>
-              <th>Student</th><th>Teacher</th><th class="text-end">Held</th><th style="width:130px">Attendance</th>
-            </tr></thead>
-            <tbody>
-            {% for s in enrolled %}
-              {% set a = summaries.get(s.id, {}) %}
-              <tr>
-                <td class="tick"><input class="form-check-input" type="checkbox" name="student_ids" value="{{ s.id }}" data-row-tick></td>
-                <td><a href="{{ url_for('admin.student_profile', student_id=s.id) }}">{{ s.full_name }}</a>
-                  <div class="sub mono">{{ s.username }}</div></td>
-                <td class="small">{{ teacher_by_student[s.id].full_name if teacher_by_student.get(s.id) else '—' }}</td>
-                <td class="text-end mono">{{ a.get('held', 0) }}</td>
-                <td>{{ m.meter(a.get('percent', 0), a.get('held', 0)) }}</td>
-              </tr>
-            {% else %}
-              <tr><td colspan="5" class="empty-line p-4">Nobody is enrolled yet.</td></tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
+{% if not assignments %}
+<div class="alert alert-warning">
+  Nothing appears for teachers or students until you enrol people below.
+</div>
+{% endif %}
+
+<div class="form-row cols-2" style="gap:1.25rem;margin-bottom:1.25rem">
+
+  <!-- Enrol a whole batch -->
+  <div class="panel">
+    <h2 class="panel-title">Enrol a whole batch</h2>
+    <p class="panel-hint">Adds every active student in that batch at once.</p>
+    <form method="post" action="{{ url_for('admin.enrol', cid=course.id) }}">
+      <input type="hidden" name="mode" value="class">
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Teacher <span class="req">*</span></label>
+        {% if course_teacher %}
+          <input type="hidden" name="teacher_id" value="{{ course_teacher.id }}">
+          <input class="form-control" value="{{ course_teacher.full_name }}" disabled>
+          <div class="form-hint">Taken from the class that already teaches this subject.</div>
+        {% else %}
+        <select class="form-select" name="teacher_id" required>
+          <option value="">— choose a teacher —</option>
+          {% for t in teachers_all %}<option value="{{ t.id }}">{{ t.full_name }}</option>{% endfor %}
+        </select>
+        {% endif %}
       </div>
-    </form>
-
-    <div class="panel mt-4">
-      <h2 class="panel-title">Assessments <span class="count-pill">{{ assessments|length }}</span></h2>
-      {% if assessments %}
-        <table class="table table-sm align-middle mb-0">
-          <thead><tr><th>Title</th><th>Type</th><th>Set</th><th>Due</th><th class="text-end">Max</th></tr></thead>
-          <tbody>
-          {% for a in assessments %}
-            <tr>
-              <td>{{ a.title }}{% if not a.is_published %} <span class="pill pill-off">Hidden</span>{% endif %}</td>
-              <td class="small">{{ a.kind }}</td>
-              <td class="mono small nowrap">{{ a.assigned_date.strftime('%d %b') }}</td>
-              <td class="mono small nowrap">{{ a.due_date.strftime('%d %b') if a.due_date else '—' }}</td>
-              <td class="text-end mono">{{ '%g'|format(a.max_score) }}</td>
-            </tr>
+      <div style="margin-bottom:1rem">
+        <label class="form-label">Batch <span class="req">*</span></label>
+        <select class="form-select" name="group_id" required>
+          <option value="">— choose a batch —</option>
+          {% for b in course_classes %}
+            <option value="{{ b.id }}">{{ b.name }} ({{ b.student_count }} students)</option>
           {% endfor %}
-          </tbody>
-        </table>
-      {% else %}<p class="empty-line">No work has been set on this course.</p>{% endif %}
-    </div>
+        </select>
+      </div>
+      <button class="btn btn-primary">Enrol batch</button>
+    </form>
+  </div>
+
+  <!-- Enrol individuals -->
+  <div class="panel">
+    <h2 class="panel-title">Enrol individual students</h2>
+    <p class="panel-hint">Tick the students to add. Search filters the list.</p>
+    <form method="post" action="{{ url_for('admin.enrol', cid=course.id) }}">
+      <input type="hidden" name="mode" value="individual">
+      <div style="margin-bottom:.7rem">
+        <label class="form-label">Teacher <span class="req">*</span></label>
+        {% if course_teacher %}
+          <input type="hidden" name="teacher_id" value="{{ course_teacher.id }}">
+          <input class="form-control" value="{{ course_teacher.full_name }}" disabled>
+          <div class="form-hint">Taken from the class that already teaches this subject.</div>
+        {% else %}
+        <select class="form-select" name="teacher_id" required>
+          <option value="">— choose a teacher —</option>
+          {% for t in teachers_all %}<option value="{{ t.id }}">{{ t.full_name }}</option>{% endfor %}
+        </select>
+        {% endif %}
+      </div>
+      <div style="margin-bottom:.6rem">
+        <input class="form-control" id="studentFilter"
+               placeholder="Filter students…" autocomplete="off">
+      </div>
+      <div id="studentPicker"
+           style="max-height:14rem;overflow-y:auto;border:1px solid var(--line);border-radius:.3rem;padding:.5rem">
+        {% for s in available_students %}
+        <label class="pick-row"
+               style="display:flex;align-items:center;gap:.5rem;padding:.25rem 0;font-size:.86rem">
+          <input type="checkbox" name="student_ids" value="{{ s.id }}">
+          <span>{{ s.full_name }}</span>
+          <span class="sub mono" style="margin-left:auto">{{ s.username }}</span>
+        </label>
+        {% else %}
+        <p class="sub" style="margin:0">All active students are already enrolled.</p>
+        {% endfor %}
+      </div>
+      <button class="btn btn-primary" style="margin-top:.85rem">Enrol selected</button>
+    </form>
   </div>
 </div>
+
+<!-- Enrolled list -->
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:1rem 1.15rem .7rem">
+    <h2 class="panel-title" style="margin:0">
+      Enrolled students <span class="count-pill">{{ assignments|length }}</span>
+    </h2>
+  </div>
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>ID</th><th>Student</th><th>Teacher</th><th></th></tr></thead>
+      <tbody>
+      {% for a in assignments %}
+      <tr>
+        <td class="mono sub">{{ a.student.username }}</td>
+        <td>
+          <a href="{{ url_for('admin.student_profile', sid=a.student.id) }}">{{ a.student.full_name }}</a>
+        </td>
+        
+        <td class="sub">{{ a.teacher.full_name }}</td>
+        <td>
+          <form method="post" action="{{ url_for('admin.unenrol', cid=course.id) }}"
+                onsubmit="return confirm('Remove {{ a.student.full_name }} from this course?')">
+            <input type="hidden" name="student_id" value="{{ a.student.id }}">
+            <button class="btn btn-xs btn-link" style="color:var(--red)">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="empty-line">Nobody enrolled yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Danger zone -->
+<div class="panel panel-flag">
+  <h2 class="panel-title">Danger zone</h2>
+  <p class="panel-hint">
+    Deleting a course removes <strong>all its attendance, lesson logs, marks and materials</strong>.
+    Archive it instead to keep the records.
+  </p>
+  <form method="post" action="{{ url_for('admin.delete_course', cid=course.id) }}"
+        style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end">
+    <div style="max-width:200px">
+      <label class="form-label">Type DELETE to confirm</label>
+      <input class="form-control" name="confirm" placeholder="DELETE" autocomplete="off">
+    </div>
+    <button class="btn btn-danger">Delete course</button>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ ab.course_about_script() }}
+<script>
+document.getElementById('studentFilter').addEventListener('input', function () {
+  var q = this.value.toLowerCase();
+  document.querySelectorAll('#studentPicker .pick-row').forEach(function (row) {
+    row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+</script>
 {% endblock %}

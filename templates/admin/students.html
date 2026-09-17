@@ -1,256 +1,228 @@
 {% extends "base.html" %}
 {% import "partials/macros.html" as m %}
-{% block title %}Students · {{ org_name }}{% endblock %}
-
+{% block title %}Students · PIE Scheduler{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1 class="page-title">Students</h1>
-    <p class="page-sub">Attendance figures cover {{ window_label|lower }}.</p>
+    <p class="page-sub">{{ page.total }} student(s) &nbsp;·&nbsp; {{ window_label }}</p>
   </div>
   <div class="head-actions">
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addOne">Add a student</button>
-    <button class="btn btn-outline-dark" data-bs-toggle="modal" data-bs-target="#addMany">Add many</button>
-    <a class="btn btn-outline-dark" href="{{ url_for('admin.students_export', **request.args) }}">Export CSV</a>
-    <a class="btn btn-outline-dark" href="{{ url_for('admin.credentials_export', **request.args) }}">Logins CSV</a>
+    <button class="btn btn-primary" onclick="document.getElementById('addOneModal').style.display='flex'">
+      + Add student
+    </button>
+    <button class="btn btn-outline" onclick="document.getElementById('addManyModal').style.display='flex'">
+      + Add many
+    </button>
+    <a class="btn btn-primary" href="{{ url_for('admin.student_routines_pdf_route', **request.args) }}">
+      Routines PDF (all shown)
+    </a>
+    <a class="btn btn-outline" href="{{ url_for('admin.students_export', **request.args) }}">Export CSV</a>
+    <a class="btn btn-outline" href="{{ url_for('admin.credentials_export') }}">Logins CSV</a>
   </div>
 </div>
 
-{% if dupe_count and not duplicates_only %}
+{% if dupe_count %}
 <div class="alert alert-warning">
-  {{ dupe_count }} name(s) appear on more than one record — usually the same
-  student added twice.
-  <a href="{{ url_for('admin.students', duplicates=1) }}">Review and merge them</a>.
+  {{ dupe_count }} name(s) appear more than once — possible duplicate students.
+  <a href="{{ url_for('admin.students', q='') }}">Review them</a>.
 </div>
 {% endif %}
 
-{% if duplicates_only %}
-<div class="alert alert-warning">
-  Showing only names that appear more than once. Tick the two records for the
-  same person and press <strong>Merge</strong> — the older ID is kept and all
-  enrolments, attendance and marks move onto it.
-  <a href="{{ url_for('admin.students') }}">Back to everyone</a>.
-</div>
-{% endif %}
+<div class="panel p-0">
+  <!-- Filter bar -->
+  <form class="filter-bar" method="get">
+    <div class="fb-search">
+      <input class="form-control" name="q" value="{{ filters.q }}"
+             placeholder="Name, ID, phone, email…" autocomplete="off">
+    </div>
+    <select class="form-select" name="branch">
+      <option value="">All branches</option>
+      {% for b in BRANCHES %}
+        <option value="{{ b }}" {{ 'selected' if filters.branch == b }}>{{ b }}</option>
+      {% endfor %}
+    </select>
+    <select class="form-select" name="course_id">
+      <option value="">All courses</option>
+      {% for c in courses %}
+        <option value="{{ c.id }}" {{ 'selected' if filters.course_id == c.id }}>{{ c.course_code }}</option>
+      {% endfor %}
+    </select>
+    <select class="form-select" name="status">
+      <option value="ACTIVE"    {{ 'selected' if filters.status == 'ACTIVE' }}>Active</option>
+      <option value="ARCHIVED"  {{ 'selected' if filters.status == 'ARCHIVED' }}>Archived</option>
+      <option value="ALL"       {{ 'selected' if filters.status == 'ALL' }}>All</option>
+    </select>
+    <select class="form-select" name="term_id">
+      {% for t in terms %}
+        <option value="{{ t.id }}" {{ 'selected' if window_label == t.name }}>{{ t.name }}</option>
+      {% endfor %}
+      <option value="all" {{ 'selected' if window_label == 'All time' }}>All time</option>
+    </select>
+    <button class="btn btn-dark">Search</button>
+    <a class="btn btn-link" href="{{ url_for('admin.students') }}">Clear</a>
+  </form>
 
-<form class="filter-bar" method="get">
-  <div class="fb-search">
-    <input class="form-control" name="q" value="{{ filters.q }}"
-           placeholder="Search by name, ID, phone or email" autocomplete="off">
-  </div>
-  <select class="form-select" name="branch">
-    <option value="">All branches</option>
-    {% for b in BRANCHES %}<option value="{{ b }}" {% if filters.branch == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
-  </select>
-  <select class="form-select" name="batch_id">
-    <option value="">All batches</option>
-    {% for b in batches %}<option value="{{ b.id }}" {% if filters.batch_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
-  </select>
-  <select class="form-select" name="course_id">
-    <option value="">All courses</option>
-    {% for c in courses %}<option value="{{ c.id }}" {% if filters.course_id == c.id %}selected{% endif %}>{{ c.course_code }}</option>{% endfor %}
-  </select>
-  <select class="form-select" name="status">
-    <option value="ACTIVE" {% if filters.status == 'ACTIVE' %}selected{% endif %}>Active</option>
-    <option value="ARCHIVED" {% if filters.status == 'ARCHIVED' %}selected{% endif %}>Archived</option>
-    <option value="ALL" {% if filters.status == 'ALL' %}selected{% endif %}>Active + archived</option>
-  </select>
-  <select class="form-select" name="term_id">
-    {% for t in terms %}<option value="{{ t.id }}" {% if window_label == t.name %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
-    <option value="all" {% if window_label == 'All time' %}selected{% endif %}>All time</option>
-  </select>
-  <button class="btn btn-primary">Search</button>
-  <a class="btn btn-link" href="{{ url_for('admin.students') }}">Clear</a>
-</form>
-
-<form method="post" action="{{ url_for('admin.people_action') }}" id="peopleForm">
-  <input type="hidden" name="back" value="{{ request.full_path }}">
-  <div class="panel p-0">
-    <div class="bulk-bar">
+  <!-- Bulk action bar -->
+  <form method="post" action="{{ url_for('admin.students_action') }}" id="peopleForm">
+    <input type="hidden" name="back" value="{{ request.full_path }}">
+    <div class="bulk-bar" id="bulkBar">
       <span class="selected-count" data-selected-count>No one selected</span>
       <div class="bulk-buttons">
-        <button class="btn btn-sm btn-outline-dark" name="action" value="merge"
-                onclick="return confirm('Merge the two selected records? The older ID is kept and everything moves onto it. This cannot be undone.')">Merge two records</button>
-        <button class="btn btn-sm btn-outline-dark" name="action" value="reset">Reset passwords</button>
+        <button class="btn btn-sm btn-outline" name="action" value="reset">Reset passwords</button>
         {% if filters.status == 'ARCHIVED' %}
-          <button class="btn btn-sm btn-outline-dark" name="action" value="restore">Restore</button>
+          <button class="btn btn-sm btn-success" name="action" value="restore">Restore</button>
         {% else %}
-          <button class="btn btn-sm btn-outline-dark" name="action" value="archive">Archive</button>
+          <button class="btn btn-sm btn-outline" name="action" value="archive">Archive</button>
         {% endif %}
-        <button type="button" class="btn btn-sm btn-outline-danger"
-                data-bs-toggle="modal" data-bs-target="#deleteModal">Delete permanently</button>
+        <button type="button" class="btn btn-sm btn-danger"
+                onclick="document.getElementById('deleteModal').style.display='flex'">
+          Delete permanently
+        </button>
       </div>
     </div>
 
     <div class="table-responsive">
-      <table class="table align-middle mb-0 list-table">
+      <table class="list-table" id="studentTable">
         <thead>
           <tr>
-            <th class="tick"><input class="form-check-input" type="checkbox" data-select-all></th>
-            <th>Student ID</th><th>Name</th><th>Phone</th><th>Branch</th><th>Batch</th>
-            <th class="text-end">Held</th><th class="text-end">Attended</th>
-            <th style="width:140px">Attendance</th><th></th>
+            <th class="tick"><input type="checkbox" data-select-all></th>
+            <th>ID</th><th>Name</th><th>Phone</th><th>Branch</th><th>Batch</th>
+            <th>Attendance</th><th>Status</th><th></th>
           </tr>
         </thead>
         <tbody>
         {% for s in page.items %}
-          {% set a = summaries.get(s.id, {}) %}
+          {% set att = summaries.get(s.id, {}) %}
           <tr>
-            <td class="tick"><input class="form-check-input" type="checkbox" name="user_ids"
-                                    value="{{ s.id }}" data-row-tick></td>
-            <td class="mono">{{ s.username }}</td>
+            <td class="tick"><input type="checkbox" name="user_ids" value="{{ s.id }}" data-row-tick></td>
+            <td class="mono sub">{{ s.username }}</td>
             <td>
-              <a href="{{ url_for('admin.student_profile', student_id=s.id) }}">{{ s.full_name }}</a>
-              {% if s.status == 'ARCHIVED' %} {{ m.status_pill(s) }}{% endif %}
+              <a href="{{ url_for('admin.student_profile', sid=s.id) }}">{{ s.full_name }}</a>
+              {% if s.status == 'ARCHIVED' %} {{ m.pill_status(s.status) }}{% endif %}
             </td>
-            <td class="mono small">{{ s.phone or '—' }}</td>
-            <td class="small">{{ s.branch or '—' }}</td>
-            <td class="small">{{ s.batch.name if s.batch else '—' }}</td>
-            <td class="text-end mono">{{ a.get('held', 0) }}</td>
-            <td class="text-end mono">{{ a.get('attended', 0) }}</td>
-            <td>{{ m.meter(a.get('percent', 0), a.get('held', 0)) }}</td>
-            <td class="text-end nowrap">
-              <a class="btn btn-sm btn-outline-dark"
-                 href="{{ url_for('admin.student_profile', student_id=s.id) }}">Open</a>
+            <td class="mono sub">{{ s.phone or '—' }}</td>
+            <td class="sub">{{ s.branch or '—' }}</td>
+            <td class="sub"></td>
+            <td>{{ m.meter(att.get('percent', 0), att.get('held', 0)) }}</td>
+            <td>{{ m.pill_status(s.status) }}</td>
+            <td class="nowrap">
+              <a class="btn btn-xs btn-outline"
+                 href="{{ url_for('admin.student_profile', sid=s.id) }}">View</a>
+              <a class="btn btn-xs btn-outline"
+                 href="{{ url_for('admin.edit_student', sid=s.id) }}">Edit</a>
+              <a class="btn btn-xs btn-outline"
+                 href="{{ url_for('admin.student_routine_pdf_route', sid=s.id) }}"
+                 title="Routine PDF">Routine</a>
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="10" class="empty-line p-4">
-            No students match that search.
-            {% if filters.q or filters.branch or filters.batch_id or filters.course_id %}
-              <a href="{{ url_for('admin.students') }}">Clear the filters</a> to see everyone.
-            {% endif %}
-          </td></tr>
+          <tr><td colspan="9" class="empty-line">No students match that search.</td></tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
-  </div>
 
-  {{ m.pager(page, 'admin.students', page_args()) }}
+    {{ m.pager(page, 'admin.students', page_args()) }}
 
-  <div class="modal fade" id="deleteModal" tabindex="-1">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">Delete permanently</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <p>This removes the selected people <strong>and every attendance record,
-             mark and enrolment attached to them</strong>. It cannot be undone.</p>
-          <p class="text-muted small">If they have simply finished or left, use Archive
-             instead — that keeps the record and frees the name from your lists.</p>
-          <label class="form-label">Type DELETE to confirm</label>
+    <!-- Delete confirm modal -->
+    <div id="deleteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center">
+      <div class="panel" style="width:100%;max-width:420px;margin:1rem">
+        <h3 class="panel-title">Delete permanently</h3>
+        <p style="font-size:.875rem;color:var(--ink-soft)">
+          This removes the selected students <strong>and all their attendance, marks and enrolments</strong>.
+          It cannot be undone. Archive instead if they have just left.
+        </p>
+        <div style="margin-bottom:1rem">
+          <label class="form-label">Type <strong>DELETE</strong> to confirm</label>
           <input class="form-control" name="confirm" autocomplete="off" placeholder="DELETE">
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
+        <div style="display:flex;gap:.5rem">
           <button class="btn btn-danger" name="action" value="delete">Delete permanently</button>
+          <button type="button" class="btn btn-link"
+                  onclick="document.getElementById('deleteModal').style.display='none'">Cancel</button>
         </div>
       </div>
     </div>
-  </div>
-</form>
+  </form>
+</div>
 
-{# ------------------------------------------------------------ add one #}
-<div class="modal fade" id="addOne" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
-    <form class="modal-content" method="post" action="{{ url_for('admin.create_student') }}">
-      <div class="modal-header">
-        <h5 class="modal-title">Add a student</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <p class="text-muted small">The next ID will be <span class="mono">{{ next_id }}</span>.
-           A password is generated and shown once you save.</p>
-        <div class="alert alert-warning py-2 small">Only for someone new to PIE.
-          To put an existing student into another course, open the course and use
-          <strong>Enrol students</strong> — creating them again makes a second,
-          separate record.</div>
-        <div class="mb-3"><label class="form-label">Full name</label>
-          <input class="form-control" name="full_name" required></div>
-        <div class="mb-3"><label class="form-label">Phone</label>
-          <input class="form-control" name="phone" placeholder="+8801…"></div>
-        <div class="mb-3"><label class="form-label">Email</label>
-          <input type="email" class="form-control" name="email"></div>
-        <div class="row g-3">
-          <div class="col-6"><label class="form-label">Branch</label>
-            <select class="form-select" name="branch">
-              <option value="">—</option>
-              {% for b in BRANCHES %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
-            </select></div>
-          <div class="col-6"><label class="form-label">Batch</label>
-            <select class="form-select" name="batch_id">
-              <option value="">—</option>
-              {% for b in batches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
-            </select></div>
+<!-- Add one modal -->
+<div id="addOneModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center">
+  <div class="panel" style="width:100%;max-width:480px;margin:1rem">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h3 class="panel-title" style="margin:0">Add a student</h3>
+      <button type="button" class="btn btn-link" onclick="document.getElementById('addOneModal').style.display='none'">✕</button>
+    </div>
+    <p class="panel-hint">
+      Next ID will be <strong class="mono">{{ next_id }}</strong>.
+      A password is generated automatically — shown in the success message.
+    </p>
+    <form method="post" action="{{ url_for('admin.create_student') }}">
+      <div class="form-row cols-2" style="margin-bottom:.85rem">
+        <div>
+          <label class="form-label">Full name <span class="req">*</span></label>
+          <input class="form-control" name="full_name" required placeholder="Full name">
+        </div>
+        <div>
+          <label class="form-label">Phone</label>
+          <input class="form-control" name="phone" placeholder="+8801…">
         </div>
       </div>
-      <div class="modal-footer">
-        <label class="tiny-check me-auto">
+      <div class="form-row cols-2" style="margin-bottom:.85rem">
+        <div>
+          <label class="form-label">Branch</label>
+          <select class="form-select" name="branch">
+            <option value="">—</option>
+            {% for b in BRANCHES %}<option>{{ b }}</option>{% endfor %}
+          </select>
+        </div>
+      <div style="margin-bottom:1rem">
+        <label class="form-label">Email</label>
+        <input type="email" class="form-control" name="email" placeholder="optional">
+      </div>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <label style="font-size:.82rem;color:var(--ink-soft);display:flex;align-items:center;gap:.35rem">
           <input type="checkbox" name="create_anyway" value="1">
-          create anyway (a different person with the same name)</label>
-        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary">Create student</button>
+          Create even if name already exists
+        </label>
+        <button class="btn btn-primary" style="margin-left:auto">Create student</button>
       </div>
     </form>
   </div>
 </div>
 
-{# ----------------------------------------------------------- add many #}
-<div class="modal fade" id="addMany" tabindex="-1">
-  <div class="modal-dialog modal-lg modal-dialog-centered">
-    <form class="modal-content" method="post" action="{{ url_for('admin.bulk_students') }}">
-      <div class="modal-header">
-        <h5 class="modal-title">Add many students at once</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+<!-- Add many modal -->
+<div id="addManyModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center">
+  <div class="panel" style="width:100%;max-width:580px;margin:1rem">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h3 class="panel-title" style="margin:0">Add many students</h3>
+      <button type="button" class="btn btn-link" onclick="document.getElementById('addManyModal').style.display='none'">✕</button>
+    </div>
+    <div class="alert alert-info">
+      One student per line — name, or name and phone separated by a comma.
+      Names already on file are skipped. IDs and passwords are auto-generated.
+    </div>
+    <form method="post" action="{{ url_for('admin.bulk_students') }}">
+      <div style="margin-bottom:.85rem">
+        <label class="form-label">Student list <span class="req">*</span></label>
+        <textarea class="form-control mono" name="names" rows="10" required
+          placeholder="Ahmed Karim, +8801711234567&#10;Fatima Akter&#10;Rakib Hossain, +8801911234567"></textarea>
+        <div class="form-hint">Phone is optional. Download Logins CSV afterwards to share passwords.</div>
       </div>
-      <div class="modal-body">
-        <div class="alert alert-warning py-2 small mb-3">
-          This creates a <strong>new login for every name</strong> — use it for a
-          new intake. Names already on file are skipped, so nobody is duplicated.
-          To add existing students to another course, open the course and use
-          <strong>Enrol students</strong> instead.
+      <div class="form-row cols-2" style="margin-bottom:1rem">
+        <div>
+          <label class="form-label">Branch</label>
+          <select class="form-select" name="branch">
+            <option value="">—</option>
+            {% for b in BRANCHES %}<option>{{ b }}</option>{% endfor %}
+          </select>
         </div>
-        <div class="mb-3">
-          <label class="form-label">One student per line — name, or name and phone</label>
-          <textarea class="form-control mono" name="names" rows="10" required
-placeholder="Full name, +8801XXXXXXXXX
-Full name, +8801XXXXXXXXX
-Full name (phone is optional)"></textarea>
-          <div class="form-text">IDs and passwords are generated for everyone.
-            Download the logins CSV straight afterwards to hand them out.</div>
-        </div>
-        <div class="row g-3">
-          <div class="col-md-4"><label class="form-label">Branch</label>
-            <select class="form-select" name="branch">
-              <option value="">—</option>
-              {% for b in BRANCHES %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
-            </select></div>
-          <div class="col-md-4"><label class="form-label">Batch</label>
-            <select class="form-select" name="batch_id">
-              <option value="">—</option>
-              {% for b in batches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
-            </select></div>
-          <div class="col-md-4"><label class="form-label">Teacher for the enrolments</label>
-            <select class="form-select" name="teacher_id">
-              <option value="">—</option>
-              {% for t in teachers_all %}<option value="{{ t.id }}">{{ t.full_name }}</option>{% endfor %}
-            </select></div>
-          <div class="col-12"><label class="form-label">Enrol them all in these courses (optional)</label>
-            <select class="form-select" name="course_ids" multiple size="5">
-              {% for c in courses %}<option value="{{ c.id }}">{{ c.course_code }} — {{ c.course_name }}</option>{% endfor %}
-            </select>
-            <div class="form-text">Needs a teacher selected. Ctrl or Cmd to pick several.</div></div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <label class="tiny-check me-auto">
-          <input type="checkbox" name="create_anyway" value="1">
-          create even if the name already exists</label>
-        <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary">Create them</button>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <label style="font-size:.82rem;color:var(--ink-soft);display:flex;align-items:center;gap:.35rem">
+          <input type="checkbox" name="create_anyway" value="1"> Allow duplicates
+        </label>
+        <button class="btn btn-primary" style="margin-left:auto">Create all</button>
       </div>
     </form>
   </div>

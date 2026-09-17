@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% import "partials/macros.html" as m %}
+{% block title %}Daily routine · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Daily routine &amp; rooms</h1>
+    <p class="page-sub">{{ on.strftime('%A %d %B %Y') }} &middot;
+      type a room on each row, then save.</p>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-primary"
+       href="{{ url_for('admin.daily_pdf', date=on.isoformat(),
+                        teacher_id=filter_tid or '') }}">Daily PDF</a>
+  </div>
+</div>
+
+<div class="panel" style="margin-bottom:1.1rem;padding:.7rem .95rem">
+  <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <a class="btn btn-outline btn-sm"
+       href="{{ url_for('admin.daily', date=prev_d.isoformat(), teacher_id=filter_tid or '') }}">&larr; Previous day</a>
+    <input type="date" class="form-control" name="date" value="{{ on.isoformat() }}"
+           onchange="this.form.submit()" style="width:170px">
+    <a class="btn btn-outline btn-sm"
+       href="{{ url_for('admin.daily', teacher_id=filter_tid or '') }}">Today</a>
+    <a class="btn btn-outline btn-sm"
+       href="{{ url_for('admin.daily', date=next_d.isoformat(), teacher_id=filter_tid or '') }}">Next day &rarr;</a>
+    <select class="form-select" name="teacher_id" style="max-width:180px"
+            onchange="this.form.submit()">
+      <option value="">All teachers</option>
+      {% for t in teachers_all %}
+        <option value="{{ t.id }}" {{ 'selected' if filter_tid == t.id }}>{{ t.full_name }}</option>
+      {% endfor %}
+    </select>
+    <span class="sub" style="margin-left:auto">
+      {{ stats.classes }} class(es) &middot; {{ stats.with_room }} with a room
+      &middot; {{ stats.students }} student places
+    </span>
+  </form>
+</div>
+
+{% if rows %}
+<form method="post" action="{{ url_for('admin.daily_rooms') }}">
+<input type="hidden" name="date" value="{{ on.isoformat() }}">
+<input type="hidden" name="teacher_id" value="{{ filter_tid or '' }}">
+
+<div class="panel p-0">
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead>
+        <tr><th style="width:130px">Time</th><th>Class</th><th>Teacher</th>
+            <th style="width:80px;text-align:center">Students</th>
+            <th style="width:90px">Status</th>
+            <th style="width:180px">Room assign</th></tr>
+      </thead>
+      <tbody>
+      {% for c in rows %}
+        <tr class="{{ 'row-off' if c.status == 'Cancelled' }}">
+          <td class="nowrap mono">{{ c.start_str }}<div class="sub">{{ c.end_str }}</div></td>
+          <td>
+            <div class="td-name">{{ c.task or 'Class' }}</div>
+            <div class="sub">
+              {% if c.class_type == '1-on-1' %}One-to-one{% else %}{{ c.class_type }}{% endif %}
+              {% if c.course %} &middot; {{ c.course.course_code }}{% endif %}
+              {% if c.student %} &middot; {{ c.student.full_name }}{% endif %}
+            </div>
+          </td>
+          <td class="sub">{{ c.teacher.full_name if c.teacher else '—' }}</td>
+          <td style="text-align:center" class="mono">
+            {{ c.head_count if c.head_count is not none else '—' }}
+          </td>
+          <td>{{ m.pill_sched(c.status) }}</td>
+          <td>
+            {% if c.venue and c.venue|lower in ['online','zoom'] %}
+              <span class="pill pill-blue">ONLINE</span>
+              <input type="hidden" name="room_{{ c.id }}" value="{{ c.room or '' }}">
+            {% else %}
+              <input class="form-control room-in" name="room_{{ c.id }}"
+                     value="{{ c.room or '' }}" placeholder="Room 1, Lab…"
+                     autocomplete="off" list="roomList">
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div style="padding:.9rem 1.15rem;border-top:1px solid var(--line);
+              display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+    <button class="btn btn-primary">Save rooms</button>
+    <span class="sub">Saved against this date only — tomorrow is untouched.</span>
+  </div>
+</div>
+</form>
+
+<datalist id="roomList">
+  {% for r in ['Room 1','Room 2','Room 3','Room 4','Lab','Conference Room','Library'] %}
+    <option value="{{ r }}">{% endfor %}
+</datalist>
+{% else %}
+<div class="panel"><p class="empty-line">No classes on this date.</p></div>
+{% endif %}
+
+<style>
+.row-off{opacity:.5}
+.room-in{max-width:170px}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Enter moves to the next room box rather than submitting early
+document.querySelectorAll('.room-in').forEach(function (el, i, all) {
+  el.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault();
+      if (all[i + 1]) all[i + 1].focus(); else el.form.submit(); }
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,99 @@
+{% macro availability_grid(teacher=None) %}
+{% set names = [('5','Saturday'),('6','Sunday'),('0','Monday'),('1','Tuesday'),
+                ('2','Wednesday'),('3','Thursday'),('4','Friday')] %}
+{% set hmap = teacher.hours_map if teacher else {} %}
+{% set offd = teacher.off_days if teacher else [] %}
+
+<p class="panel-hint" style="margin-bottom:.8rem">
+  Tick the days this teacher works and set the hours. Nothing will ever be
+  booked outside these times, on any screen.
+</p>
+
+<div style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap;
+            padding:.7rem .85rem;background:var(--surface);
+            border:1px solid var(--line);border-radius:.3rem;margin-bottom:.9rem">
+  <div>
+    <label class="form-label" style="margin-bottom:.2rem">Quick fill from</label>
+    <input type="time" class="form-control" id="qfFrom" value="10:00" style="width:130px">
+  </div>
+  <div>
+    <label class="form-label" style="margin-bottom:.2rem">to</label>
+    <input type="time" class="form-control" id="qfTo" value="20:00" style="width:130px">
+  </div>
+  <button type="button" class="btn btn-outline btn-sm" id="qfApply">
+    Apply to every ticked day
+  </button>
+</div>
+
+<div class="table-responsive">
+  <table class="list-table" id="availTable">
+    <thead>
+      <tr>
+        <th style="width:46px">Works</th>
+        <th>Day</th>
+        <th style="width:150px">From</th>
+        <th style="width:150px">To</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for val, label in names %}
+      {% set wd = val|int %}
+      {% set works = teacher is none or (wd not in offd) %}
+      {% set span = hmap.get(wd) %}
+      <tr>
+        <td style="text-align:center">
+          <input type="checkbox" name="works_{{ wd }}" value="1"
+                 class="avail-tick" data-day="{{ wd }}"
+                 style="width:17px;height:17px;cursor:pointer"
+                 {{ 'checked' if works }}>
+        </td>
+        <td class="td-name">{{ label }}</td>
+        <td>
+          <input type="time" class="form-control avail-from" name="from_{{ wd }}"
+                 data-day="{{ wd }}"
+                 value="{{ span[0].strftime('%H:%M') if span else '10:00' }}">
+        </td>
+        <td>
+          <input type="time" class="form-control avail-to" name="to_{{ wd }}"
+                 data-day="{{ wd }}"
+                 value="{{ span[1].strftime('%H:%M') if span else '20:00' }}">
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
+
+{% macro availability_script() %}
+<script>
+(function () {
+  function sync(cb) {
+    var d = cb.dataset.day;
+    document.querySelectorAll('[data-day="' + d + '"]').forEach(function (el) {
+      if (el.type === 'time') {
+        el.disabled = !cb.checked;
+        el.style.opacity = cb.checked ? '1' : '.4';
+      }
+    });
+  }
+  document.querySelectorAll('.avail-tick').forEach(function (cb) {
+    sync(cb);
+    cb.addEventListener('change', function () { sync(cb); });
+  });
+  var apply = document.getElementById('qfApply');
+  if (apply) apply.addEventListener('click', function () {
+    var a = document.getElementById('qfFrom').value;
+    var b = document.getElementById('qfTo').value;
+    document.querySelectorAll('.avail-tick').forEach(function (cb) {
+      if (!cb.checked) return;
+      var d = cb.dataset.day;
+      var f = document.querySelector('.avail-from[data-day="' + d + '"]');
+      var t = document.querySelector('.avail-to[data-day="' + d + '"]');
+      if (f) f.value = a;
+      if (t) t.value = b;
+    });
+  });
+})();
+</script>
+{% endmacro %}
