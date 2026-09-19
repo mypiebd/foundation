@@ -4,13 +4,15 @@ import os
 from datetime import date, datetime, timedelta
 
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect,
-                   render_template, request, url_for)
+                   render_template, request, send_file, url_for)
 from flask_login import current_user, login_required
 from sqlalchemy import func
 
 from helpers import (BREAK_AFTER, BREAK_MINS, active_teachers,
                      clear_orphan_slot_links,
-                     analyse_slot, get_daily_schedule, get_student_schedule,
+                     analyse_slot, date_for_count, get_daily_schedule,
+                     get_student_schedule,
+                     backup_database, expiring_classes,
                      get_teacher_schedule, slot_options, stranded_students,
                      student_courses,
                      unlinked_schedules,
@@ -105,7 +107,10 @@ def overview():
          "where": url_for("admin.class_new"),
          "why": "Pick the subject, the days and times, and who attends."},
     ]
-    return render_template("admin/overview.html",
+    # classes whose timetable is about to run out
+    expiring = expiring_classes()
+
+    return render_template("admin/overview.html", expiring=expiring,
                            counts=counts, todays=todays, pending=pending[:10],
                            free=free, day_warnings=day_warnings,
                            at_risk=at_risk, setup=setup,
@@ -337,6 +342,7 @@ def delete_student(sid):
     db.session.delete(student)
     db.session.commit()
     flash(f"{name} permanently deleted.", "success")
+    log_action("student-delete", f"Student {sid} '{name}' DELETED")
     return redirect(url_for("admin.students"))
 
 
@@ -680,9 +686,11 @@ def delete_course(cid):
     if confirm != "DELETE":
         flash("Type DELETE to confirm.", "danger")
         return redirect(url_for("admin.course_detail", cid=cid))
+    nm = course.course_name
     db.session.delete(course)
     db.session.commit()
     flash("Course permanently deleted.", "success")
+    log_action("course-delete", f"Subject {cid} '{nm}' DELETED")
     return redirect(url_for("admin.courses"))
 
 
@@ -1264,6 +1272,9 @@ def classes():
     if cid:
         q = q.filter_by(course_id=cid)
     groups = q.order_by(ClassGroup.status, ClassGroup.name).all()
+    if request.args.get("expiring"):
+        soon = {e["group"].id for e in expiring_classes()}
+        groups = [g for g in groups if g.id in soon]
     rows = [{"g": g, "c": g.counts()} for g in groups]
     totals = {
         "batch":   ClassGroup.query.filter_by(kind="Batch").count(),
@@ -1288,9 +1299,23 @@ def class_new():
         venue = request.form.get("venue", "Centre")
         sids  = [int(x) for x in request.form.getlist("student_ids")]
         start = parse_date(request.form.get("start_date")) or date.today()
-        forever = request.form.get("runs", "forever") == "forever"
-        end   = None if forever else parse_date(request.form.get("end_date"))
+        runs  = request.form.get("runs", "forever")
         slots = _slots_from_form(request.form)
+        forever = runs == "forever"
+        end = None
+        want = None
+        if runs == "count":
+            want = request.form.get("num_classes", type=int)
+            if not want or want < 1:
+                flash("How many classes? Give a number of 1 or more.", "danger")
+                return redirect(url_for("admin.class_new"))
+            # Build with headroom, then trim to exactly `want`. Headroom
+            # matters because days off, breaks and clashes all drop dates,
+            # so a naive week count comes up short.
+            days = {wd for wd, _, _ in slots}
+            end = date_for_count(days, start, want * 3, tid) if days else None
+        elif runs == "until":
+            end = parse_date(request.form.get("end_date"))
 
         course = db.session.get(Course, cid) if cid else None
         if not tid:
@@ -1299,8 +1324,9 @@ def class_new():
         if not slots:
             flash("Add at least one day and time.", "danger")
             return redirect(url_for("admin.class_new"))
-        if not forever and not end:
-            flash("Give a finish date, or let it run until you stop it.", "danger")
+        if runs == "until" and not end:
+            flash("Give a finish date, or choose one of the other options.",
+                  "danger")
             return redirect(url_for("admin.class_new"))
         if not name:
             if kind == "1-on-1" and sids:
@@ -1330,7 +1356,7 @@ def class_new():
                     "name": name, "venue": venue, "student_ids": sids,
                     "start_date": start.isoformat(),
                     "end_date": end.isoformat() if end else "",
-                    "runs": "forever" if forever else "until",
+                    "runs": runs,
                     "slots": [[wd, st.strftime("%H:%M"), en.strftime("%H:%M")]
                               for wd, st, en in slots],
                 }
@@ -1357,6 +1383,19 @@ def class_new():
                                                student_id=sid))
         db.session.flush()
         res = generate_group(g)
+
+        if want:
+            extra = (g.sessions.filter(ClassSchedule.status == "Scheduled")
+                     .order_by(ClassSchedule.date.desc(),
+                               ClassSchedule.start_time.desc()).all())[:-want or None]
+            for x in extra:
+                db.session.delete(x)
+            kept = g.sessions.filter(ClassSchedule.status == "Scheduled").all()
+            if kept:
+                g.end_date = max(x.date for x in kept)
+                g.generated_to = g.end_date
+            db.session.commit()
+            res["made"] = len(kept)
 
         msg = f"'{name}' created. {res['made']} class(es) booked"
         if res["clash"] or res["off"]:
@@ -1498,16 +1537,42 @@ def class_slots(gid):
 
     new_tid = request.form.get("teacher_id", type=int) or g.teacher_id
     venue   = request.form.get("venue", g.venue)
+    new_name = request.form.get("name", "").strip()
     scope   = request.form.get("scope", "future")
     forced  = request.form.get("force") == "1"
     from_d  = date.today() if scope == "future" else g.start_date
     sids    = [m.student_id for m in g.members]
 
+    # If nothing about the timetable actually changed, there is nothing to
+    # check and nothing to rebuild. Renaming a class, or correcting its venue,
+    # should not be pushed through a clash screen about times it already runs.
+    current = sorted((sl.weekday, sl.start_time, sl.end_time) for sl in g.slots)
+    unchanged = (sorted(slots) == current and new_tid == g.teacher_id)
+    if unchanged:
+        changed = []
+        if new_name and new_name != g.name:
+            old_name = g.name
+            g.name = new_name[:160]
+            for x in g.sessions.filter(ClassSchedule.date >= date.today()).all():
+                x.task = g.name
+            changed.append(f"renamed from '{old_name}'")
+        if venue != g.venue:
+            g.venue = venue
+            changed.append(f"venue set to {venue}")
+        db.session.commit()
+        if changed:
+            log_action("class-amend", f"Class {g.id}: {', '.join(changed)}")
+            flash(f"'{g.name}' saved — {', and '.join(changed)}. "
+                  f"The timetable was not touched.", "success")
+        else:
+            flash("Nothing to change.", "info")
+        return redirect(url_for("admin.class_detail", gid=gid))
+
     # ── check first, change second ──────────────────────────────────────
     problems = []
     for i, (wd, st, en) in enumerate(slots):
         res = analyse_slot(new_tid, wd, st, en, sids, max(from_d, date.today()),
-                           g.end_date)
+                           g.end_date, exclude_group_id=g.id)
         if res["clean"]:
             continue
         opts = slot_options(new_tid, res["sample"], st, en, sids)
@@ -1519,7 +1584,7 @@ def class_slots(gid):
         return render_template(
             "admin/class_amend_resolve.html", g=g, problems=problems,
             teacher=db.session.get(User, new_tid), counts=counts,
-            scope=scope, venue=venue,
+            scope=scope, venue=venue, new_name=new_name,
             slots_json=json.dumps([[wd, st.strftime("%H:%M"), en.strftime("%H:%M")]
                                    for wd, st, en in slots]),
             **_lists())
@@ -1535,12 +1600,20 @@ def class_slots(gid):
                                  start_time=st, end_time=en))
     g.teacher_id = new_tid
     g.venue = venue
+    if new_name and new_name != g.name:
+        g.name = new_name[:160]
     g.generated_to = from_d - timedelta(days=1)
     db.session.flush()
     # the slot collection is stale after the swap; reload it so the rebuilt
     # sessions point at the new slots rather than the deleted ones
     db.session.expire(g, ["slots"])
     res = generate_group(g)
+    if new_name:
+        # the label is copied onto each dated class when it is built, so a
+        # rename has to reach the sessions as well as the class itself
+        for x in g.sessions.filter(ClassSchedule.date >= from_d).all():
+            x.task = g.name
+        db.session.commit()
 
     clear_orphan_slot_links()
     log_action("class-amend",
@@ -1573,6 +1646,7 @@ def class_amend_confirm(gid):
     base_tid = request.form.get("teacher_id", type=int) or g.teacher_id
     scope = request.form.get("scope", "future")
     venue = request.form.get("venue", g.venue)
+    new_name = request.form.get("name", "").strip()
 
     keep = []
     for i, (wd, a, b) in enumerate(proposed):
@@ -1617,10 +1691,18 @@ def class_amend_confirm(gid):
             end_time=dtime(*[int(x) for x in b.split(":")])))
     g.teacher_id = new_tid
     g.venue = venue
+    if new_name and new_name != g.name:
+        g.name = new_name[:160]
     g.generated_to = from_d - timedelta(days=1)
     db.session.flush()
     db.session.expire(g, ["slots"])
     res = generate_group(g)
+    if new_name:
+        # the label is copied onto each dated class when it is built, so a
+        # rename has to reach the sessions as well as the class itself
+        for x in g.sessions.filter(ClassSchedule.date >= from_d).all():
+            x.task = g.name
+        db.session.commit()
 
     clear_orphan_slot_links()
     log_action("class-amend",
@@ -1664,6 +1746,7 @@ def class_students(gid):
                                            student_id=sid))
     db.session.commit()
     flash(f"{added} student(s) added.", "success")
+    log_action("class-roll", f"Class {g.id} '{g.name}' roll changed")
     return redirect(url_for("admin.class_detail", gid=gid))
 
 
@@ -1680,6 +1763,7 @@ def class_pause(gid):
     span = (f"{frm.strftime('%d %b')} to {to.strftime('%d %b %Y')}"
             if to else f"from {frm.strftime('%d %b %Y')}")
     flash(f"'{g.name}' paused {span}. {n} class(es) cancelled.", "success")
+    log_action("class-pause", f"Class {g.id} '{g.name}' paused")
     return redirect(url_for("admin.class_detail", gid=gid))
 
 
@@ -1707,6 +1791,7 @@ def class_stop(gid):
     n = stop_group(g, frm, request.form.get("note", "").strip())
     flash(f"'{g.name}' stopped. {n} future class(es) cancelled. "
           f"Everything already taught is kept.", "success")
+    log_action("class-stop", f"Class {g.id} '{g.name}' stopped")
     return redirect(url_for("admin.class_detail", gid=gid))
 
 
@@ -1714,21 +1799,59 @@ def class_stop(gid):
 @login_required
 @admin_only
 def class_extend(gid):
+    """Extend by a date, by a number of classes, or remove the end date."""
     g = db.session.get(ClassGroup, gid)
     if not g:
         abort(404)
-    if request.form.get("mode") == "forever":
+    mode = request.form.get("mode", "date")
+
+    if mode == "forever":
         g.end_date = None
+    elif mode == "count":
+        want = request.form.get("add_classes", type=int)
+        if not want or want < 1:
+            flash("How many more classes? Give a number of 1 or more.", "danger")
+            return redirect(url_for("admin.class_detail", gid=gid))
+        from_d = max(date.today(), (g.end_date or date.today()) + timedelta(days=1))
+        days = {s.weekday for s in g.slots}
+        if not days:
+            flash("This class has no days set, so there is nothing to extend.",
+                  "danger")
+            return redirect(url_for("admin.class_detail", gid=gid))
+        before = g.sessions.filter(ClassSchedule.status == "Scheduled").count()
+        g.end_date = date_for_count(days, from_d, want * 3, g.teacher_id)
+        if g.status == "Stopped":
+            g.status = "Active"
+        db.session.commit()
+        generate_group(g)
+        # trim back to exactly the number asked for
+        added = (g.sessions.filter(ClassSchedule.status == "Scheduled",
+                                   ClassSchedule.date >= from_d)
+                 .order_by(ClassSchedule.date, ClassSchedule.start_time).all())
+        for x in added[want:]:
+            db.session.delete(x)
+        kept = g.sessions.filter(ClassSchedule.status == "Scheduled").all()
+        if kept:
+            g.end_date = max(x.date for x in kept)
+            g.generated_to = g.end_date
+        db.session.commit()
+        log_action("class-extend", f"Class {g.id} '{g.name}': +{want} class(es)")
+        now = len(kept)
+        flash(f"{now - before} class(es) added, running to "
+              f"{g.end_date.strftime('%d %b %Y')}.", "success")
+        return redirect(url_for("admin.class_detail", gid=gid))
     else:
         nd = parse_date(request.form.get("new_end"))
         if not nd:
             flash("Give a new finish date.", "danger")
             return redirect(url_for("admin.class_detail", gid=gid))
         g.end_date = nd
+
     if g.status == "Stopped":
         g.status = "Active"
     db.session.commit()
     res = generate_group(g)
+    log_action("class-extend", f"Class {g.id} '{g.name}': mode={mode}")
     flash(f"'{g.name}' extended. {res['made']} class(es) added, "
           f"running to {res['upto'].strftime('%d %b %Y')}.", "success")
     return redirect(url_for("admin.class_detail", gid=gid))
@@ -1755,6 +1878,7 @@ def class_delete(gid):
     g = db.session.get(ClassGroup, gid)
     if not g:
         abort(404)
+    nm, n_sess = g.name, g.sessions.count()
     if request.form.get("confirm") != "DELETE":
         flash("Type DELETE to confirm.", "danger")
         return redirect(url_for("admin.class_detail", gid=gid))
@@ -1762,6 +1886,7 @@ def class_delete(gid):
     db.session.delete(g)
     db.session.commit()
     flash(f"'{name}' and all its classes deleted.", "success")
+    log_action("class-delete", f"Class {gid} '{nm}' DELETED with {n_sess} session(s)")
     return redirect(url_for("admin.classes"))
 
 
@@ -1884,6 +2009,7 @@ def daily_rooms():
     n = update_schedule_rooms(mapping)
     flash(f"{n} room(s) saved for {on.strftime('%A %d %B %Y')}."
           if n else "No room changes to save.", "success" if n else "info")
+    log_action("rooms", f"{n} room(s) set for {on.isoformat()}")
     return redirect(url_for("admin.daily", date=on.isoformat(),
                             teacher_id=request.form.get("teacher_id") or None))
 
@@ -1905,6 +2031,126 @@ def daily_pdf():
     except RuntimeError:
         return _no_pdf()
     return _pdf(data, f"daily_routine_{on.isoformat()}.pdf")
+
+
+@bp.route("/admin/activity")
+@login_required
+@admin_only
+def activity():
+    """Who changed what, most recent first."""
+    who    = request.args.get("actor", type=int)
+    action = request.args.get("action", "")
+    q = AuditLog.query
+    if who:
+        q = q.filter_by(actor_id=who)
+    if action:
+        q = q.filter_by(action=action)
+    rows = q.order_by(AuditLog.created_at.desc()).limit(300).all()
+    actions = sorted({a.action for a in AuditLog.query
+                      .with_entities(AuditLog.action).distinct()})
+    staff = (User.query.filter(User.role.in_(["ADMIN", "TEACHER"]))
+             .order_by(User.full_name).all())
+    return render_template("admin/activity.html", rows=rows, actions=actions,
+                           staff=staff, f_actor=who, f_action=action,
+                           total=AuditLog.query.count(), **_lists())
+
+
+@bp.route("/admin/backup")
+@login_required
+@admin_only
+def backup():
+    """
+    Download a copy of the whole database.
+
+    Everything the centre has is in this one file, so keeping a dated copy
+    somewhere other than the server is the only real protection against a
+    mistake or a lost account.
+    """
+    from flask import after_this_request
+    try:
+        path, name = backup_database()
+    except RuntimeError as e:
+        flash(str(e), "danger")
+        return redirect(url_for("admin.overview"))
+
+    @after_this_request
+    def cleanup(resp):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return resp
+
+    log_action("backup", f"Database downloaded as {name}")
+    return send_file(path, as_attachment=True, download_name=name,
+                     mimetype="application/x-sqlite3")
+
+
+@bp.route("/admin/classes/extend-many", methods=["POST"])
+@login_required
+@admin_only
+def classes_extend_many():
+    """Extend several classes at once, by a count or by removing the end date."""
+    ids = [int(x) for x in request.form.getlist("group_ids") if x.isdigit()]
+    mode = request.form.get("mode", "count")
+    want = request.form.get("add_classes", type=int)
+    if not ids:
+        flash("Tick the classes you want to extend.", "danger")
+        return redirect(url_for("admin.classes"))
+    if mode == "count" and (not want or want < 1):
+        flash("How many classes? Give a number of 1 or more.", "danger")
+        return redirect(url_for("admin.classes"))
+
+    done = added = skipped = 0
+    for gid in ids:
+        g = db.session.get(ClassGroup, gid)
+        if not g:
+            continue
+        if mode == "forever":
+            g.end_date = None
+            if g.status == "Stopped":
+                g.status = "Active"
+            db.session.commit()
+            r = generate_group(g)
+            added += r["made"]
+            done += 1
+            continue
+
+        days = {sl.weekday for sl in g.slots}
+        if not days:
+            skipped += 1
+            continue
+        from_d = max(date.today(),
+                     (g.end_date or date.today()) + timedelta(days=1))
+        before = g.sessions.filter(ClassSchedule.status == "Scheduled").count()
+        g.end_date = date_for_count(days, from_d, want * 3, g.teacher_id)
+        if g.status == "Stopped":
+            g.status = "Active"
+        db.session.commit()
+        generate_group(g)
+        fresh = (g.sessions.filter(ClassSchedule.status == "Scheduled",
+                                   ClassSchedule.date >= from_d)
+                 .order_by(ClassSchedule.date, ClassSchedule.start_time).all())
+        for x in fresh[want:]:
+            db.session.delete(x)
+        kept = g.sessions.filter(ClassSchedule.status == "Scheduled").all()
+        if kept:
+            g.end_date = max(x.date for x in kept)
+            g.generated_to = g.end_date
+        db.session.commit()
+        added += len(kept) - before
+        done += 1
+
+    log_action("class-extend-many",
+               f"{done} class(es) extended, mode={mode}, {added} session(s) added")
+    msg = (f"{done} class(es) extended — {added} class(es) added."
+           if mode == "count" else
+           f"{done} class(es) now run until you stop them — "
+           f"{added} class(es) added.")
+    if skipped:
+        msg += f" {skipped} skipped for having no days set."
+    flash(msg, "success" if done else "warning")
+    return redirect(url_for("admin.classes"))
 
 
 @bp.route("/admin/data-check")

@@ -59,6 +59,11 @@
       new pattern and clash-checked as they go.
     </p>
     <form method="post" action="{{ url_for('admin.class_slots', gid=g.id) }}">
+      <div style="margin-bottom:.9rem">
+        <label class="form-label">Class name</label>
+        <input class="form-control" name="name" value="{{ g.name }}" maxlength="160">
+        <div class="form-hint">This is what students see on their routine.</div>
+      </div>
       <div id="slotRows">
         {% for s in g.slots %}
         <div class="slot-row">
@@ -134,13 +139,30 @@
     <hr style="border:0;border-top:1px solid var(--line);margin:1.2rem 0">
 
     <h3 class="form-section-title">Keep it going longer</h3>
+    <p class="panel-hint" style="margin-bottom:.7rem">
+      {% if g.is_indefinite %}This class has no end date — it runs until you stop it.
+      {% else %}Currently ends {{ g.end_date.strftime('%d %b %Y') }}.{% endif %}
+    </p>
+    <form method="post" action="{{ url_for('admin.class_extend', gid=g.id) }}"
+          style="margin-bottom:.7rem">
+      <div style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:130px">
+          <label class="form-label">Add this many classes</label>
+          <input type="number" class="form-control" name="add_classes"
+                 min="1" max="500" value="12">
+        </div>
+        <button class="btn btn-primary" name="mode" value="count">Add them</button>
+      </div>
+      <div class="form-hint">Taught classes — days off and clashes are skipped,
+        not counted.</div>
+    </form>
     <form method="post" action="{{ url_for('admin.class_extend', gid=g.id) }}">
       <div style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
-        <div style="flex:1;min-width:150px">
-          <label class="form-label">New finish date</label>
+        <div style="flex:1;min-width:130px">
+          <label class="form-label">Or a new finish date</label>
           <input type="date" class="form-control" name="new_end">
         </div>
-        <button class="btn btn-primary" name="mode" value="date">Extend</button>
+        <button class="btn btn-outline" name="mode" value="date">Extend to it</button>
         <button class="btn btn-outline" name="mode" value="forever">No end date</button>
       </div>
     </form>

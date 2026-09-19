@@ -101,12 +101,14 @@
       <h2 class="panel-title" style="margin:0">
         Work to hand in <span class="count-pill">{{ pending|length }}</span>
       </h2>
+      {% if awaiting %}<span class="sub">{{ awaiting|length }} waiting on your teacher</span>{% endif %}
     </div>
+
     {% if pending %}
     <div style="padding:.75rem 1.15rem;display:flex;flex-direction:column;gap:.75rem;
                 max-height:26rem;overflow-y:auto">
-      {% for r in pending %}
-      {% set a = r.assessment %}
+      {% for item in pending %}
+      {% set a = item.a %}
       <div class="work-card {{ 'is-late' if a.is_overdue }}">
         <div class="work-top">
           <span class="work-kind">{{ a.kind }}</span>
@@ -114,30 +116,70 @@
           <span class="work-due">
             {% if a.due_date %}
               Due {{ a.due_date.strftime('%d %b') }}
-              {% if a.is_overdue %}<strong style="color:var(--red)"> · Overdue</strong>{% endif %}
+              {% if a.is_overdue %}<strong style="color:var(--red)"> &middot; Overdue</strong>{% endif %}
             {% else %}No due date{% endif %}
           </span>
         </div>
         <div class="work-title">{{ a.title }}</div>
         {% if a.instructions %}<div class="work-body">{{ a.instructions }}</div>{% endif %}
-        {% if a.attachment_link %}
-          <a class="btn btn-xs btn-outline" href="{{ a.attachment_link }}"
-             target="_blank" rel="noopener">Open the paper</a>
-        {% endif %}
-        <form method="post" action="{{ url_for('student.submit', aid=a.id) }}" class="work-submit">
-          <input class="form-control" name="submission_link"
-                 placeholder="Paste your Google Drive link here" required>
-          <button class="btn btn-sm btn-primary">Submit</button>
+
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin:.3rem 0">
+          {% if a.attachment_key %}
+            <a class="btn btn-xs btn-primary"
+               href="{{ url_for('student.download_brief', aid=a.id) }}">
+              Download {{ a.attachment_name|truncate(26) }}</a>
+          {% endif %}
+          {% if a.attachment_link %}
+            <a class="btn btn-xs btn-outline" href="{{ a.attachment_link }}"
+               target="_blank" rel="noopener">Open the paper</a>
+          {% endif %}
+        </div>
+
+        <form method="post" enctype="multipart/form-data"
+              action="{{ url_for('student.submit', aid=a.id) }}" class="hand-form">
+          <div>
+            <label class="form-label">Your file</label>
+            <input type="file" class="form-control" name="submission_file"
+                   accept=".doc,.docx,.pdf,.jpg,.jpeg,.png,.ppt,.pptx,.xls,.xlsx,.txt">
+          </div>
+          <div>
+            <label class="form-label">Or a link</label>
+            <input class="form-control" name="submission_link"
+                   placeholder="Google Drive or similar">
+          </div>
+          <button class="btn btn-sm btn-primary">Hand it in</button>
         </form>
+        <div class="form-hint">Attach a file, paste a link, or both. Up to 15 MB.</div>
       </div>
       {% endfor %}
     </div>
     {% else %}
     <p class="empty-line">Nothing outstanding. Well done.</p>
     {% endif %}
+
+    {% if awaiting %}
+    <div style="border-top:1px solid var(--line);padding:.8rem 1.15rem">
+      <div class="sub" style="font-weight:600;margin-bottom:.4rem">Handed in</div>
+      {% for item in awaiting %}
+      <div style="display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap;
+                  padding:.25rem 0;font-size:.86rem">
+        <span class="pill pill-navy">{{ item.a.course.course_code }}</span>
+        <span>{{ item.a.title }}</span>
+        {% if item.r.received %}
+          <span class="pill pill-blue">Received by your teacher</span>
+        {% else %}
+          <span class="pill pill-amber">Waiting for your teacher to confirm</span>
+        {% endif %}
+        {% if item.r.file_key %}
+          <a class="sub" style="margin-left:auto"
+             href="{{ url_for('student.download_mine', rid=item.r.id) }}">{{ item.r.file_name|truncate(22) }}</a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
 
-</div>
 
 {# My courses #}
 <div class="panel p-0" style="margin-bottom:1.25rem">
@@ -221,3 +263,8 @@
   </details>
 </div>
 {% endblock %}
+
+<style>
+.hand-form{display:grid;grid-template-columns:1fr 1fr auto;gap:.5rem;align-items:end}
+@media(max-width:700px){.hand-form{grid-template-columns:1fr}}
+</style>

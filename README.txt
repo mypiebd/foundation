@@ -55,6 +55,80 @@ student's whole diary. The subject page lists every class under it so you can
 see which is which, and a student's routine shows both.
 
 
+THE REGISTER BELONGS TO A CLASS, NOT A SUBJECT
+----------------------------------------------
+Two one-to-one students in the same subject sit at different times. They must
+never share a register, so the Register tab follows the actual dated class:
+
+  * pick a date with no class and it says so, and draws nothing
+  * two classes on the same date and it offers both, so you pick the one
+    you taught
+  * the roll is only that class's students
+  * attendance is written against that session, so each class keeps its own
+    record; the course total is updated at the same time for the percentages
+
+WHAT A STUDENT SEES
+A student's subject page lists ONLY the classes they are in. One-to-one
+classes are usually named after the student, so listing every class under a
+subject showed one student another student's name. It no longer does.
+Administrators still see every class under the subject.
+
+
+WHEN CLASSES RUN OUT
+--------------------
+The dashboard warns you when any running class has 45 days or fewer left on
+its timetable. Anything under 15 days is marked urgent. Classes with no end
+date never appear - they keep generating.
+
+Each row has an Extend button, and "Extend them together" opens the class
+list filtered to just those classes.
+
+BULK EXTEND
+Classes > All classes > tick the ones you want > a bar appears at the bottom:
+
+    Add this many classes    e.g. 20 taught classes each
+    Remove the end date      they run until you stop them
+
+Every class is clash-checked as it rebuilds, so a bulk extend cannot create a
+double booking.
+
+
+BACKUP
+------
+People > Download backup.
+
+Everything the centre has is in one file. The button sends you a dated copy,
+taken through SQLite so it is consistent even if someone is saving at the
+time. Keep it somewhere other than the server.
+
+Do it weekly. Nothing takes one automatically.
+
+
+ACTIVITY
+--------
+People > Activity. Who changed what, newest first, filterable by person and
+by action. Deletions are marked in red.
+
+Class changes, stops, pauses, deletions, roll changes, room assignments,
+subject edits, student deletions, bulk extends and backups are all recorded.
+
+(Until now the log was written but never saved - log_action added the entry
+to the session and left it there, so the table stayed empty. Fixed.)
+
+
+RENAMING A CLASS
+----------------
+Classes > open one > Class name > Save the timetable.
+
+The name is what students see on their routine, so it is worth getting right.
+Renaming relabels every future dated class too; past ones keep the name they
+were taught under.
+
+If you change ONLY the name or the venue, the timetable is left completely
+alone and saved straight away - no clash screen, because nothing about the
+times changed.
+
+
 CHANGING A CLASS TEACHER
 ------------------------
 Classes > open one > Days and times > change the teacher > Save.
@@ -117,6 +191,24 @@ are refused before the page is even reached. Submitted files are not
 downloadable from this account.
 
 
+HOW LONG A CLASS RUNS
+---------------------
+When you set a class up, three choices:
+
+    Until I stop it            no end date; the safe default for a batch
+    For a set number of classes   e.g. 20 classes
+    Until a set date           a fixed finish
+
+A COUNT MEANS TAUGHT CLASSES. Ask for 20 and you get exactly 20 on the
+timetable. Days off, protected breaks and clashes are skipped over, not
+counted against the 20, so a package of 20 is really 20 lessons. The form
+tells you roughly when it will finish as you type.
+
+Same on an existing class: Classes > open it > Keep it going longer >
+"Add this many classes". Or extend to a date, or remove the end date so it
+runs until you stop it.
+
+
 ASSIGNMENTS WITH FILES
 ----------------------
 Teachers attach the paper itself, not only a link. Word, PDF or an image, up
@@ -133,6 +225,12 @@ SUBMITTED means it reached the system. RECEIVED means the teacher has
 confirmed they have it. A teacher cannot enter a mark until they have
 confirmed receipt, so a student is never left wondering whether the work
 arrived. Sending work again clears the receipt, since it is new work.
+
+Every student on the subject gets the work, whoever teaches their class.
+Earlier, a teacher who ran no class on that subject silently created an
+assignment that reached nobody. A student added after the work was set gets
+their row the moment the submissions page is opened, and if a subject has no
+students at all the teacher is told rather than left guessing.
 
 Teachers see everything on Course > Work set > Submissions: who has handed
 in, the file to download, a Mark received button, then the mark box.

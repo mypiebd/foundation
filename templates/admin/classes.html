@@ -36,6 +36,14 @@
     <div class="stat-label">Stopped</div></div>
 </div>
 
+{% if request.args.get('expiring') %}
+<div class="alert alert-warning" style="margin-bottom:1rem">
+  <div>Showing only classes that are running out.
+    <a href="{{ url_for('admin.classes') }}">Show all classes</a></div>
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('admin.classes_extend_many') }}" id="bulkForm">
 <div class="panel p-0">
   <form class="filter-bar" method="get">
     <select class="form-select" name="course_id" onchange="this.form.submit()">
@@ -62,13 +70,18 @@
   <div class="table-responsive">
     <table class="list-table" id="clsTable">
       <thead>
-        <tr><th>Class</th><th>Subject</th><th>Type</th><th>Teacher</th>
+        <tr><th style="width:34px;text-align:center">
+          <input type="checkbox" id="tickAll" style="width:15px;height:15px"></th><th>Class</th><th>Subject</th><th>Type</th><th>Teacher</th>
             <th>When it runs</th><th>Students</th><th>Ahead</th><th>Status</th><th></th></tr>
       </thead>
       <tbody>
       {% for r in rows %}
         {% set g = r.g %}
         <tr>
+          <td style="text-align:center">
+            <input type="checkbox" name="group_ids" value="{{ g.id }}" class="gTick"
+                   style="width:15px;height:15px">
+          </td>
           <td class="clip" title="{{ g.name }}">
             <a href="{{ url_for('admin.class_detail', gid=g.id) }}">{{ g.name }}</a>
           </td>
@@ -101,6 +114,40 @@
       </tbody>
     </table>
   </div>
+  <div class="bulkbar" id="bulkBar">
+    <strong><span id="tickCount">0</span> selected</strong>
+    <input type="number" class="form-control" name="add_classes" min="1" max="500"
+           value="20" style="width:90px">
+    <button class="btn btn-sm btn-primary" name="mode" value="count">Add this many classes</button>
+    <button class="btn btn-sm btn-outline" name="mode" value="forever">Remove the end date</button>
+    <span class="sub">Counted as taught classes — days off and clashes are skipped.</span>
+  </div>
 </div>
+</form>
 {% endblock %}
-{% block scripts %}<script>tableSearch('clsSearch','clsTable');</script>{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var all = document.getElementById('tickAll');
+  var bar = document.getElementById('bulkBar');
+  var cnt = document.getElementById('tickCount');
+  function ticks() { return Array.prototype.slice.call(document.querySelectorAll('.gTick')); }
+  function refresh() {
+    var n = ticks().filter(function (t) { return t.checked; }).length;
+    cnt.textContent = n;
+    bar.classList.toggle('on', n > 0);
+    if (all) all.checked = n > 0 && n === ticks().length;
+  }
+  if (all) all.addEventListener('change', function () {
+    ticks().forEach(function (t) { t.checked = all.checked; }); refresh();
+  });
+  ticks().forEach(function (t) { t.addEventListener('change', refresh); });
+  refresh();
+})();
+</script><script>tableSearch('clsSearch','clsTable');</script>{% endblock %}
+
+<style>
+.bulkbar{display:none;gap:.55rem;align-items:center;flex-wrap:wrap;
+  padding:.85rem 1.15rem;border-top:1px solid var(--line);background:var(--surface)}
+.bulkbar.on{display:flex}
+</style>

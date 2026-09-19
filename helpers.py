@@ -110,8 +110,7 @@ def check_teacher_clash(teacher_id, check_date, start_time, end_time,
         ClassSchedule.date == check_date,
         ClassSchedule.status.notin_(["Cancelled"]),
     )
-    if exclude_schedule_id:
-        q = q.filter(ClassSchedule.id != exclude_schedule_id)
+    q = _not_these(q, exclude_schedule_id)
     existing = q.all()
 
     # ── Hard clash (RED) ────────────────────────────────────────────────────
@@ -152,6 +151,16 @@ def check_teacher_clash(teacher_id, check_date, start_time, end_time,
     return {"status": "green", "message": "Fully available."}
 
 
+def _not_these(q, exclude_id):
+    """Filter out one schedule id, or a whole set of them."""
+    from models import ClassSchedule
+    if not exclude_id:
+        return q
+    if isinstance(exclude_id, (set, frozenset, list, tuple)):
+        return q.filter(~ClassSchedule.id.in_(list(exclude_id)))
+    return q.filter(ClassSchedule.id != exclude_id)
+
+
 def check_student_clash(student_id, check_date, start_time, end_time,
                         exclude_schedule_id=None):
     """Returns True if student already has a class overlapping this slot."""
@@ -162,8 +171,7 @@ def check_student_clash(student_id, check_date, start_time, end_time,
         ClassSchedule.date == check_date,
         ClassSchedule.status.notin_(["Cancelled"]),
     )
-    if exclude_schedule_id:
-        q = q.filter(ClassSchedule.id != exclude_schedule_id)
+    q = _not_these(q, exclude_schedule_id)
     for cls in q.all():
         if s_mins < time_to_mins(cls.end_time) and e_mins > time_to_mins(cls.start_time):
             return True
@@ -390,12 +398,25 @@ def notices_for(user):
 # ─────────────────────────────────────────────── audit log ───────────────────
 
 def log_action(action, detail=""):
-    entry = AuditLog(
-        actor_id=current_user.id if current_user.is_authenticated else None,
-        action=action,
-        detail=detail,
-    )
-    db.session.add(entry)
+    """
+    Record who did what.
+
+    This commits on its own. Most callers log *after* their own commit, so
+    merely adding to the session left the entry sitting there and the log
+    stayed empty. A failure to write the log must never take the actual
+    change down with it, so it is swallowed and reported to the server log.
+    """
+    try:
+        db.session.add(AuditLog(
+            actor_id=current_user.id if current_user.is_authenticated else None,
+            action=action,
+            detail=(detail or "")[:500],
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        import logging
+        logging.getLogger(__name__).warning("audit log write failed: %s", action)
 
 
 # ─────────────────────────────────────────────── CSV builders ────────────────
@@ -762,8 +783,7 @@ def busy_on(teacher_id, d, exclude_id=None):
         ClassSchedule.date == d,
         ClassSchedule.status != "Cancelled",
     )
-    if exclude_id:
-        q = q.filter(ClassSchedule.id != exclude_id)
+    q = _not_these(q, exclude_id)
     return sorted(q.all(), key=lambda c: c.start_time)
 
 
@@ -846,8 +866,7 @@ def check_slot(teacher_id, d, start_time, end_time, student_ids=None,
             ClassSchedule.date == d,
             ClassSchedule.status != "Cancelled",
             ClassSchedule.student_id == sid)
-        if exclude_id:
-            q = q.filter(ClassSchedule.id != exclude_id)
+        q = _not_these(q, exclude_id)
         for c in q.all():
             if s < mins(c.end_time) and e > mins(c.start_time):
                 who = db.session.get(User, sid)
@@ -935,6 +954,36 @@ def clear_orphan_slot_links():
     if n:
         db.session.commit()
     return n
+
+
+def date_for_count(group_days, start, count, teacher_id=None, end_cap=None):
+    """
+    How far ahead you have to go to fit `count` classes.
+
+    Walks forward from `start` counting only the days the class actually
+    meets, and — when a teacher is given — only the dates they could really
+    take. That way "20 classes" means twenty taught classes, not twenty
+    calendar slots of which some fall on a day off.
+    """
+    if not group_days or count < 1:
+        return start
+    got, d, guard = 0, start, 0
+    last = start
+    while got < count and guard < 2000:
+        guard += 1
+        if d.weekday() in group_days:
+            ok = True
+            if teacher_id:
+                t = db.session.get(User, teacher_id)
+                if t and d.weekday() in t.off_days:
+                    ok = False
+            if ok:
+                got += 1
+                last = d
+        d += timedelta(days=1)
+        if end_cap and d > end_cap:
+            break
+    return last
 
 
 def generate_group(group, upto=None, commit=True):
@@ -1203,15 +1252,24 @@ def next_dates(weekday, start, count=8, end=None):
 
 
 def analyse_slot(teacher_id, weekday, st, en, student_ids, start, end=None,
-                 occurrences=8):
+                 occurrences=8, exclude_group_id=None):
     """
     Judge one weekly slot over its next few dates, so problems are caught
     before anything is created rather than silently skipped afterwards.
+
+    exclude_group_id ignores a class's own sessions. Without it, re-saving a
+    class's existing timetable reports the class as clashing with itself.
     """
+    from models import ClassSchedule
     dates = next_dates(weekday, start, occurrences, end)
     if not dates:
         return {"ok": 0, "total": 0, "clean": True, "message": "", "dates": []}
-    verdicts = [(d, check_slot(teacher_id, d, st, en, student_ids)) for d in dates]
+    own = set()
+    if exclude_group_id:
+        own = {c.id for c in ClassSchedule.query.filter_by(
+            group_id=exclude_group_id).all()}
+    verdicts = [(d, check_slot(teacher_id, d, st, en, student_ids,
+                               exclude_id=own or None)) for d in dates]
     good = [d for d, v in verdicts if v["status"] == "ok"]
     bad  = [(d, v) for d, v in verdicts if v["status"] != "ok"]
     return {
@@ -1502,3 +1560,110 @@ def student_classes(student_id):
     out = [gs.group for gs in
            GroupStudent.query.filter_by(student_id=student_id).all() if gs.group]
     return sorted(out, key=lambda g: (g.kind, g.name))
+
+
+def course_students(course_id, teacher_id=None):
+    """
+    Everyone studying a subject.
+
+    Union of class membership and direct enrolment, exactly as
+    student_courses() works in reverse. When teacher_id is given the result is
+    narrowed to that teacher's own classes plus their direct enrolments — but
+    a teacher who runs no class on the subject still sees everybody, because
+    they may have been asked to set or mark the work regardless.
+    """
+    from models import ClassAssignment, ClassGroup, GroupStudent, User
+
+    ids = set()
+    gq = ClassGroup.query.filter_by(course_id=course_id)
+    mine = gq.filter_by(teacher_id=teacher_id).all() if teacher_id else []
+    groups = mine or gq.all()
+    for g in groups:
+        for m in GroupStudent.query.filter_by(group_id=g.id).all():
+            ids.add(m.student_id)
+
+    aq = ClassAssignment.query.filter_by(course_id=course_id)
+    if teacher_id and mine:
+        aq = aq.filter_by(teacher_id=teacher_id)
+    for a in aq.all():
+        ids.add(a.student_id)
+
+    if not ids:
+        return []
+    return (User.query.filter(User.id.in_(ids), User.role == "STUDENT")
+            .order_by(User.full_name).all())
+
+
+def sync_assessment_rows(assessment):
+    """
+    Make sure every student on the subject has a row for this piece of work.
+    Safe to call repeatedly — it only adds what is missing, and never removes
+    a row that already carries a submission or a mark.
+    """
+    from models import Result
+    added = 0
+    for s in course_students(assessment.course_id):
+        if not Result.query.filter_by(assessment_id=assessment.id,
+                                      student_id=s.id).first():
+            db.session.add(Result(assessment_id=assessment.id, student_id=s.id))
+            added += 1
+    if added:
+        db.session.commit()
+    return added
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  RUNNING OUT — classes whose timetable is about to end
+# ═══════════════════════════════════════════════════════════════════════════
+
+EXPIRY_SOON_DAYS = 45
+
+
+def expiring_classes(within_days=EXPIRY_SOON_DAYS, today=None):
+    """
+    Active classes whose last booked session falls inside the window.
+
+    A class with no end date never appears here — it keeps generating. What
+    matters is the last session actually on the timetable, not the end date
+    on paper, because generation can stop short of it.
+    """
+    from models import ClassGroup, ClassSchedule
+    today = today or date.today()
+    edge = today + timedelta(days=within_days)
+    out = []
+    for g in ClassGroup.query.filter_by(status="Active").all():
+        last = (g.sessions.filter(ClassSchedule.status != "Cancelled")
+                .order_by(ClassSchedule.date.desc()).first())
+        if not last:
+            out.append({"group": g, "last": None, "days": -1,
+                        "students": g.student_count})
+            continue
+        if g.end_date is None and last.date > edge:
+            continue
+        if last.date <= edge:
+            out.append({"group": g, "last": last.date,
+                        "days": (last.date - today).days,
+                        "students": g.student_count})
+    return sorted(out, key=lambda x: (x["days"], x["group"].name))
+
+
+def backup_database():
+    """
+    A copy of the live database, named by the moment it was taken.
+    Returns (path, filename). The caller sends it and deletes it after.
+    """
+    import shutil
+    import tempfile
+    from flask import current_app
+
+    uri = current_app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    src = uri.replace("sqlite:///", "")
+    if not src or not os.path.isfile(src):
+        raise RuntimeError("The database file could not be found on the server.")
+    name = f"pie-backup-{datetime.now().strftime('%Y-%m-%d_%H%M')}.db"
+    tmp = os.path.join(tempfile.gettempdir(), name)
+    # copy through SQLite so a backup taken mid-write is still consistent
+    import sqlite3
+    with sqlite3.connect(src) as s, sqlite3.connect(tmp) as d:
+        s.backup(d)
+    return tmp, name

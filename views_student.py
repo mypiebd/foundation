@@ -35,19 +35,28 @@ def dashboard():
     avg = average_mark(current_user.id)
 
     # Pending work
-    pending = []
+    # Work still to hand in. A student may have no Result row yet — the
+    # assignment is still theirs to do, so build the list from the
+    # assignments themselves rather than from rows that may not exist.
+    pending, awaiting = [], []
     for c in courses_enrolled:
-        for a in Assessment.query.filter_by(course_id=c.id, is_published=True).all():
-            r = Result.query.filter_by(
-                assessment_id=a.id, student_id=current_user.id).first()
-            if r and r.state == "Pending" and a.needs_submission:
-                pending.append(r)
+        for a in (Assessment.query
+                  .filter_by(course_id=c.id, is_published=True)
+                  .order_by(Assessment.due_date.asc().nullslast()).all()):
+            if not a.needs_submission:
+                continue
+            r = Result.query.filter_by(assessment_id=a.id,
+                                       student_id=current_user.id).first()
+            if r is None or r.state == "Not Submitted":
+                pending.append({"a": a, "r": r})
+            elif r.state in ("Submitted", "Received"):
+                awaiting.append({"a": a, "r": r})
 
     # Every class they are actually in — batch as well as one-to-one
     upcoming = get_student_schedule(
         current_user.id, date.today(), date.today() + timedelta(days=60))[:10]
 
-    return render_template("student/dashboard.html",
+    return render_template("student/dashboard.html", awaiting=awaiting,
                            courses=courses_enrolled,
                            att=att_by_course,
                            overall={"held": overall_held, "attended": overall_attended,
@@ -72,9 +81,11 @@ def course(cid):
         abort(403)
     start, end, label = window_from_request()
     att = attendance_summary(current_user.id, cid, start, end)
-    # every way this subject is taught, so a student on both sees both
-    course_classes = (ClassGroup.query.filter_by(course_id=cid, status="Active")
-                      .order_by(ClassGroup.kind, ClassGroup.name).all())
+    # ONLY the classes this student is in. Listing every class under the
+    # subject exposed other students' one-to-one class names, which carry
+    # their names. A student sees their own arrangements and nothing else.
+    course_classes = [g for g in student_classes(current_user.id)
+                      if g.course_id == cid and g.status == "Active"]
 
     att_records = (Attendance.query
                    .filter_by(student_id=current_user.id, course_id=cid)

@@ -1,4 +1,4 @@
-{% macro course_about(course, classes=None, collapsed=6) %}
+{% macro course_about(course, classes=None, collapsed=6, own_only=false) %}
 {% if course.has_detail or classes %}
 <div class="panel about" style="margin-bottom:1.25rem">
   <div class="about-head">
@@ -47,10 +47,12 @@
   {% endif %}
 
   {% if classes %}
-  <h3 class="about-h">How this subject is taught</h3>
+  <h3 class="about-h">{{ 'Your classes in this subject' if own_only
+      else 'How this subject is taught' }}</h3>
   <div class="tw">
     <table>
-      <thead><tr><th>Class</th><th>Type</th><th>Teacher</th><th>When</th><th>Students</th></tr></thead>
+      <thead><tr><th>Class</th><th>Type</th><th>Teacher</th><th>When</th>
+        {% if not own_only %}<th>Students</th>{% endif %}</tr></thead>
       <tbody>
       {% for g in classes %}
       <tr>
@@ -61,15 +63,17 @@
         <td style="font-size:.82rem;line-height:1.5">
           {% for l in g.slot_lines %}{{ l }}{% if not loop.last %}<br>{% endif %}{% endfor %}
         </td>
-        <td class="mono">{{ g.student_count }}</td>
+        {% if not own_only %}<td class="mono">{{ g.student_count }}</td>{% endif %}
       </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
   <p class="sub" style="margin:.5rem 0 0">
-    A subject can run as a batch and one-to-one at the same time. A student may
-    take both — attendance and marks stay as one record either way.
+    {% if own_only %}Your own classes in this subject.
+    {% else %}A subject can run as a batch and one-to-one at the same time.
+    A student may take both — attendance and marks stay as one record either way.
+    {% endif %}
   </p>
   {% endif %}
 </div>

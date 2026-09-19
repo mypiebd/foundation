@@ -59,20 +59,49 @@
   </form>
 </div>
 
+{% if not sessions %}
+<div class="panel" style="border-left:3px solid var(--warn)">
+  <p style="margin:0">
+    <strong>No {{ course.course_code }} class on
+    {{ class_date.strftime('%A %d %B %Y') }}.</strong>
+    Pick a date this class actually runs — there is nothing to mark here.
+  </p>
+</div>
+
+{% else %}
+{% if sessions|length > 1 %}
+<div class="panel" style="margin-bottom:1rem;padding:.75rem .95rem">
+  <div class="form-label" style="margin-bottom:.4rem">
+    {{ sessions|length }} separate classes on this date — pick the one you taught
+  </div>
+  <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+    {% for x in sessions %}
+    <a class="btn btn-sm {{ 'btn-primary' if session and x.id == session.id else 'btn-outline' }}"
+       href="{{ url_for('teacher.course', cid=course.id, tab='register',
+                        class_date=class_date.isoformat(), session_id=x.id) }}">
+      {{ x.start_str }} · {{ x.task|truncate(28) }}
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <form method="post" action="{{ url_for('teacher.save_register', cid=course.id) }}"
       class="warn-unsaved">
   <input type="hidden" name="class_date" value="{{ class_date.isoformat() }}">
+  <input type="hidden" name="session_id" value="{{ session.id }}">
   <div class="panel p-0">
     <div class="register-head" style="padding:1rem 1.15rem .5rem">
       <div>
-        <h2 class="panel-title" style="margin:0">
-          {{ class_date.strftime('%A, %d %B %Y') }}
-        </h2>
-        {% if existing %}
-          <span class="sub">Already marked — you can change it and save again.</span>
-        {% else %}
-          <span class="sub">Not yet marked for this date.</span>
-        {% endif %}
+        <h2 class="panel-title" style="margin:0">{{ session.task }}</h2>
+        <span class="sub">
+          {{ class_date.strftime('%A, %d %B %Y') }} ·
+          {{ session.start_str }} – {{ session.end_str }} ·
+          {% if session.group and session.group.kind == '1-on-1' %}one-to-one
+          {% else %}batch{% endif %} ·
+          {% if existing %}already marked, you can change it and save again
+          {% else %}not yet marked{% endif %}
+        </span>
       </div>
       <div style="display:flex;gap:.35rem">
         <button type="button" class="btn btn-sm btn-outline" data-mark-all="Present">All present</button>
@@ -88,7 +117,7 @@
               <th style="text-align:center">Absent</th></tr>
         </thead>
         <tbody>
-        {% for s in students %}
+        {% for s in roll %}
           {% set cur = existing.get(s.id) %}
           <tr>
             <td class="mono sub">{{ s.username }}</td>
@@ -100,15 +129,19 @@
             </td>
             {% endfor %}
           </tr>
+        {% else %}
+          <tr><td colspan="5"><div class="empty-line">
+            Nobody is attached to this class yet.</div></td></tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
     <div style="padding:1rem 1.15rem">
-      <button class="btn btn-primary">Save register</button>
+      <button class="btn btn-primary" {{ 'disabled' if not roll }}>Save register</button>
     </div>
   </div>
 </form>
+{% endif %}
 {% endif %}
 {% endif %}
 

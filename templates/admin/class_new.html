@@ -127,12 +127,21 @@
           <label class="form-label">Runs</label>
           <select class="form-select" name="runs" id="runsSel">
             <option value="forever">Until I stop it</option>
+            <option value="count">For a set number of classes</option>
             <option value="until">Until a set date</option>
           </select>
         </div>
         <div id="endWrap" style="display:none">
           <label class="form-label">Last class</label>
           <input type="date" class="form-control" name="end_date">
+        </div>
+        <div id="countWrap" style="display:none">
+          <label class="form-label">How many classes</label>
+          <input type="number" class="form-control" name="num_classes"
+                 min="1" max="500" value="12" id="numClasses">
+          <div class="form-hint" id="countHint">
+            Counted as taught classes — days off and clashes are skipped, not counted.
+          </div>
         </div>
       </div>
     </div>
@@ -242,7 +251,7 @@
       '<div class="slot-detail" data-opts="' + i + '"></div>';
     rows.appendChild(wrap);
     wrap.querySelector('.rm').addEventListener('click', function () {
-      wrap.remove(); updateCount();
+      wrap.remove(); updateCount(); estimate();
     });
     ['.slot-day', '.slot-from', '.slot-to'].forEach(function (sel) {
       wrap.querySelector(sel).addEventListener('change', function () { checkRow(wrap); });
@@ -355,7 +364,7 @@
   }
 
   document.getElementById('addSlot').addEventListener('click', function () {
-    addRow();
+    addRow(); estimate();
   });
   document.getElementById('checkAll').addEventListener('click', checkAll);
   function teacherChanged() {
@@ -409,19 +418,51 @@
   });
 
   var runs = document.getElementById('runsSel');
-  runs.addEventListener('change', function () {
+  function runsChanged() {
     document.getElementById('endWrap').style.display =
       runs.value === 'until' ? '' : 'none';
+    document.getElementById('countWrap').style.display =
+      runs.value === 'count' ? '' : 'none';
+    estimate();
     checkAll();
-  });
+  }
+  runs.addEventListener('change', runsChanged);
+
+  // tell the user roughly when a class count will finish
+  function estimate() {
+    var hint = document.getElementById('countHint');
+    if (!hint || runs.value !== 'count') return;
+    var n = parseInt(document.getElementById('numClasses').value, 10) || 0;
+    var perWeek = document.querySelectorAll('.slot-block').length;
+    var base = 'Counted as taught classes \u2014 days off and clashes are ' +
+               'skipped, not counted.';
+    if (n > 0 && perWeek > 0) {
+      var weeks = Math.ceil(n / perWeek);
+      var sd = document.querySelector('[name="start_date"]');
+      var txt = base + ' At ' + perWeek + ' a week that is about ' + weeks +
+                ' week' + (weeks === 1 ? '' : 's');
+      if (sd && sd.value) {
+        var d = new Date(sd.value);
+        d.setDate(d.getDate() + weeks * 7);
+        txt += ', finishing around ' + d.toLocaleDateString(undefined,
+               { day: 'numeric', month: 'short', year: 'numeric' });
+      }
+      hint.textContent = txt + '.';
+    } else {
+      hint.textContent = base;
+    }
+  }
+  var nc = document.getElementById('numClasses');
+  if (nc) nc.addEventListener('input', estimate);
   ['[name="start_date"]', '[name="end_date"]'].forEach(function (s) {
     var el = document.querySelector(s);
-    if (el) el.addEventListener('change', checkAll);
+    if (el) el.addEventListener('change', function () { estimate(); checkAll(); });
   });
 
   addRow();   // start with one row
   updateCount();
   teacherChanged();
+  runsChanged();
 })();
 </script>
 {% endblock %}

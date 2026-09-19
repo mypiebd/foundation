@@ -15,6 +15,55 @@
   </div>
 </div>
 
+{% if expiring %}
+{% set urgent = expiring | selectattr('days','lt',15) | list %}
+<div class="panel p-0" style="margin-bottom:1.25rem;
+     border-left:3px solid {{ 'var(--red)' if urgent else 'var(--warn)' }}">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0;
+        color:{{ 'var(--red)' if urgent else 'var(--warn)' }}">
+      {{ expiring|length }} class(es) running out
+      {% if urgent %}<span class="count-pill">{{ urgent|length }} urgent</span>{% endif %}
+    </h2>
+    <span class="sub">Once the last date passes, these students have no classes</span>
+  </div>
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Class</th><th>Teacher</th><th>Students</th>
+                 <th>Last class</th><th>Left</th><th></th></tr></thead>
+      <tbody>
+      {% for e in expiring[:8] %}
+      <tr>
+        <td><div class="td-name">{{ e.group.name }}</div>
+            <div class="sub">{% if e.group.kind == 'Batch' %}Batch{% else %}One-to-one{% endif %}</div></td>
+        <td class="sub">{{ e.group.teacher.full_name if e.group.teacher else '—' }}</td>
+        <td class="mono">{{ e.students }}</td>
+        <td class="nowrap">
+          {% if e.last %}{{ e.last.strftime('%d %b %Y') }}
+          {% else %}<span style="color:var(--red)">nothing booked</span>{% endif %}</td>
+        <td>
+          {% if e.days < 0 %}<span class="pill pill-red">none left</span>
+          {% elif e.days < 15 %}<span class="pill pill-red">{{ e.days }} days</span>
+          {% else %}<span class="pill pill-amber">{{ e.days }} days</span>{% endif %}
+        </td>
+        <td><a class="btn btn-xs btn-primary"
+               href="{{ url_for('admin.class_detail', gid=e.group.id) }}">Extend</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div style="padding:.8rem 1.15rem;border-top:1px solid var(--line);
+              display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+    {% if expiring|length > 8 %}
+      <span class="sub">and {{ expiring|length - 8 }} more</span>
+    {% endif %}
+    <a class="btn btn-sm btn-primary" href="{{ url_for('admin.classes', expiring=1) }}"
+       style="margin-left:auto">Extend them together</a>
+  </div>
+</div>
+{% endif %}
+
 {% if show_setup %}
 <div class="panel panel-flag" style="margin-bottom:1.25rem">
   <h2 class="panel-title">Getting started</h2>

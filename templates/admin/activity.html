@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Activity · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Activity</h1>
+    <p class="page-sub">
+      Who changed what. {{ total }} entr{{ 'y' if total == 1 else 'ies' }} on record,
+      newest first.
+    </p>
+  </div>
+  <div class="head-actions">
+    <a class="btn btn-outline" href="{{ url_for('admin.backup') }}">Download backup</a>
+  </div>
+</div>
+
+<div class="panel" style="margin-bottom:1.1rem;padding:.7rem .95rem">
+  <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <select class="form-select" name="actor" style="max-width:190px"
+            onchange="this.form.submit()">
+      <option value="">Anyone</option>
+      {% for u in staff %}
+        <option value="{{ u.id }}" {{ 'selected' if f_actor == u.id }}>{{ u.full_name }}</option>
+      {% endfor %}
+    </select>
+    <select class="form-select" name="action" style="max-width:190px"
+            onchange="this.form.submit()">
+      <option value="">Any action</option>
+      {% for a in actions %}
+        <option {{ 'selected' if f_action == a }}>{{ a }}</option>
+      {% endfor %}
+    </select>
+    {% if f_actor or f_action %}
+      <a class="btn btn-link btn-sm" href="{{ url_for('admin.activity') }}">Clear</a>
+    {% endif %}
+    <span class="sub" style="margin-left:auto">Showing the most recent 300</span>
+  </form>
+</div>
+
+<div class="panel p-0">
+  {% if rows %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th style="width:150px">When</th><th style="width:150px">Who</th>
+                 <th style="width:140px">Action</th><th>What</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="nowrap sub">{{ r.created_at.strftime('%d %b %Y') }}
+          <div class="mono">{{ r.created_at.strftime('%H:%M') }}</div></td>
+        <td>{{ r.actor.full_name if r.actor else 'system' }}</td>
+        <td>
+          {% if 'delete' in r.action %}<span class="pill pill-red">{{ r.action }}</span>
+          {% elif 'stop' in r.action or 'pause' in r.action %}
+            <span class="pill pill-amber">{{ r.action }}</span>
+          {% else %}<span class="pill pill-gray">{{ r.action }}</span>{% endif %}
+        </td>
+        <td class="sub">{{ r.detail }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">
+    Nothing recorded yet. Changes to classes, subjects, students and rooms
+    will appear here as they happen.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -6,7 +6,8 @@ from flask import (Blueprint, abort, current_app, flash, redirect,
                    render_template, request, send_file, url_for)
 from flask_login import current_user, login_required
 
-from helpers import (attendance_grid_csv, check_slot, day_timeline, fmt,
+from helpers import (attendance_grid_csv, check_slot, course_students,
+                     day_timeline, fmt, sync_assessment_rows,
                      log_action, marksheet_csv, notices_for, outstanding_for,
                      parse_date, role_required, save_upload, upload_path,
                      window_from_request)
@@ -32,23 +33,14 @@ def _my_courses():
 
 
 def _my_students(course_id):
-    """Everyone on this course, whether enrolled directly or through a class."""
-    ids = set()
-    q = ClassAssignment.query.filter_by(course_id=course_id)
-    if not current_user.is_admin:
-        q = q.filter_by(teacher_id=current_user.id)
-    for a in q.all():
-        ids.add(a.student_id)
-    gq = ClassGroup.query.filter_by(course_id=course_id)
-    if not current_user.is_admin:
-        gq = gq.filter_by(teacher_id=current_user.id)
-    for g in gq.all():
-        for mem in g.members:
-            ids.add(mem.student_id)
-    if not ids:
-        return []
-    return (User.query.filter(User.id.in_(ids))
-            .order_by(User.full_name).all())
+    """
+    Everyone on this subject. Narrowed to the teacher's own classes where they
+    run one, but a teacher who runs none still sees the whole subject — they
+    may have been asked to set or mark the work anyway, and returning nobody
+    silently produced assignments that reached no student.
+    """
+    return course_students(course_id,
+                           None if current_user.is_admin else current_user.id)
 
 
 # ─────────────────────────────────────────── my courses list ───────────────
@@ -79,12 +71,53 @@ def course(cid):
     extra = {}
     if tab == "register":
         class_date = parse_date(request.args.get("class_date")) or date.today()
-        existing   = {a.student_id: a.status for a in
-                      Attendance.query.filter_by(course_id=cid, date=class_date).all()}
-        marked_dates = sorted({a.date for a in
-                                Attendance.query.filter_by(course_id=cid).all()}, reverse=True)
+
+        # A register belongs to ONE class, not to a whole subject. Two
+        # one-to-one students in the same subject sit at different times and
+        # must never share a list.
+        q = (ClassSchedule.query
+             .filter(ClassSchedule.date == class_date,
+                     ClassSchedule.course_id == cid,
+                     ClassSchedule.status != "Cancelled",
+                     ClassSchedule.class_type != "Break"))
+        if not current_user.is_admin:
+            q = q.filter(ClassSchedule.teacher_id == current_user.id)
+        sessions = q.order_by(ClassSchedule.start_time).all()
+
+        chosen_id = request.args.get("session_id", type=int)
+        session = None
+        if sessions:
+            session = next((x for x in sessions if x.id == chosen_id), sessions[0])
+
+        roll = []
+        if session:
+            if session.group:
+                roll = sorted((m.student for m in session.group.members if m.student),
+                              key=lambda u: u.full_name)
+            elif session.student:
+                roll = [session.student]
+
+        existing = {}
+        if session:
+            existing = {a.student_id: a.status for a in
+                        ScheduleAttendance.query.filter_by(
+                            schedule_id=session.id).all()}
+            if not existing:
+                existing = {a.student_id: a.status for a in
+                            Attendance.query.filter_by(
+                                course_id=cid, date=class_date).all()
+                            if a.student_id in {s.id for s in roll}}
+
+        marked = (ScheduleAttendance.query
+                  .join(ClassSchedule,
+                        ScheduleAttendance.schedule_id == ClassSchedule.id)
+                  .filter(ClassSchedule.course_id == cid).all())
+        marked_dates = sorted({a.schedule.date for a in marked if a.schedule},
+                              reverse=True)
+
         extra = {"class_date": class_date, "existing": existing,
-                 "marked_dates": marked_dates}
+                 "marked_dates": marked_dates, "sessions": sessions,
+                 "session": session, "roll": roll}
 
     elif tab == "lessons":
         extra["logs"] = (LessonLog.query.filter_by(course_id=cid)
@@ -131,29 +164,64 @@ def course(cid):
 @login_required
 @teacher_only
 def save_register(cid):
+    """
+    Save the register for ONE class on one date.
+
+    Attendance is written against the dated session, so two one-to-one
+    students in the same subject keep separate records even when their
+    classes fall on the same day.
+    """
     c = db.session.get(Course, cid)
     if not c:
         abort(404)
     class_date = parse_date(request.form.get("class_date")) or date.today()
-    students   = _my_students(cid)
+    sid = request.form.get("session_id", type=int)
+    session = db.session.get(ClassSchedule, sid) if sid else None
+    if not session or session.course_id != cid:
+        flash("That class could not be found. Pick the date again.", "danger")
+        return redirect(url_for("teacher.course", cid=cid, tab="register",
+                                class_date=class_date.isoformat()))
+    if (not current_user.is_admin
+            and session.teacher_id != current_user.id):
+        abort(403)
+
+    if session.group:
+        roll = [m.student for m in session.group.members if m.student]
+    elif session.student:
+        roll = [session.student]
+    else:
+        roll = []
+
     saved = 0
-    for s in students:
+    for s in roll:
         status = request.form.get(f"status_{s.id}")
         if not status:
             continue
-        existing = Attendance.query.filter_by(
-            student_id=s.id, course_id=cid, date=class_date).first()
-        if existing:
-            existing.status = status
+        # against the session, so each class keeps its own record
+        row = ScheduleAttendance.query.filter_by(
+            schedule_id=session.id, student_id=s.id).first()
+        if row:
+            row.status = status
         else:
-            db.session.add(Attendance(
-                student_id=s.id, course_id=cid,
-                date=class_date, status=status))
+            db.session.add(ScheduleAttendance(
+                schedule_id=session.id, student_id=s.id, status=status))
+        # and against the course, which is what the percentages read
+        old = Attendance.query.filter_by(
+            student_id=s.id, course_id=cid, date=class_date).first()
+        if old:
+            old.status = status
+        else:
+            db.session.add(Attendance(student_id=s.id, course_id=cid,
+                                      date=class_date, status=status))
         saved += 1
     db.session.commit()
-    flash(f"Register saved for {class_date.strftime('%d %b %Y')} ({saved} student(s)).", "success")
+    log_action("register",
+               f"{session.task} on {class_date.isoformat()}: {saved} student(s)")
+    flash(f"Register saved for {session.task} — "
+          f"{class_date.strftime('%d %b %Y')} ({saved} student(s)).", "success")
     return redirect(url_for("teacher.course", cid=cid, tab="register",
-                            class_date=class_date.isoformat()))
+                            class_date=class_date.isoformat(),
+                            session_id=session.id))
 
 
 # ─────────────────────────────────────────── lesson log ────────────────────
@@ -232,10 +300,13 @@ def create_work(cid):
             return redirect(url_for("teacher.course", cid=cid, tab="work"))
 
     db.session.commit()
-    for s in _my_students(cid):
-        db.session.add(Result(assessment_id=a.id, student_id=s.id))
-    db.session.commit()
-    flash(f"'{title}' assigned"
+    n = sync_assessment_rows(a)
+    if a.needs_submission and n == 0:
+        flash(f"'{title}' was created, but no student is attached to "
+              f"{a.course.course_code if a.course else 'this subject'} yet, so "
+              f"nobody can hand it in. Add students to a class first.", "warning")
+        return redirect(url_for("teacher.course", cid=cid, tab="work"))
+    flash(f"'{title}' assigned to {n} student(s)"
           + (f" with {a.attachment_name}." if a.attachment_key else "."),
           "success")
     return redirect(url_for("teacher.course", cid=cid, tab="work"))
@@ -706,13 +777,23 @@ def submissions(aid):
             course_id=a.course_id, teacher_id=current_user.id).first()
         if not assigned:
             abort(403)
+    # anyone added to the subject after the work was set still needs a row,
+    # and anyone who submitted without one must not be lost
+    sync_assessment_rows(a)
     rows = []
+    seen = set()
     for s in _my_students(a.course_id):
         r = Result.query.filter_by(assessment_id=aid, student_id=s.id).first()
         if not r:
             r = Result(assessment_id=aid, student_id=s.id)
             db.session.add(r)
+        seen.add(s.id)
         rows.append({"student": s, "r": r})
+    # a submission from someone outside the teacher's own classes is still a
+    # submission — show it rather than hiding the work
+    for r in Result.query.filter_by(assessment_id=aid).all():
+        if r.student_id not in seen and r.student:
+            rows.append({"student": r.student, "r": r})
     db.session.commit()
     order = {"Submitted": 0, "Received": 1, "Marked": 2, "Not Submitted": 3}
     rows.sort(key=lambda x: (order.get(x["r"].state, 9), x["student"].full_name))
