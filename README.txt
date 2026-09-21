@@ -55,6 +55,202 @@ student's whole diary. The subject page lists every class under it so you can
 see which is which, and a student's routine shows both.
 
 
+DELETING A STUDENT
+------------------
+Deleting a student now removes everything that belongs only to them: class
+memberships, enrolments, marks, attendance and register entries. A session
+booked for that student alone goes too; a class they were in carries on for
+everyone else.
+
+Before this, the class memberships were left behind. The class count read one
+too high and the class page crashed trying to link to someone who no longer
+existed. migrate.py now clears any such leftovers from an older database.
+
+The bulk delete on the Students page is now recorded in Activity as well.
+
+
+TIDYING IMPORTED DATA
+---------------------
+    python tidy_data.py            preview, changes nothing
+    python tidy_data.py --apply    make the changes, backup first
+
+Fixes two problems that have one obviously right answer:
+
+  - names with a phone number pasted in ("Maryea Habib<tab>8801302251446")
+    are cleaned, and the number moves into the phone field if it is empty
+  - the same student entered twice is merged onto the OLDER record, which
+    holds the history
+
+If the two records disagree about which classes the student is in, the
+script does not guess. It leaves both and tells you, because putting one
+person in both sets of classes can double-book them.
+
+
+WHEN SOME DATES ARE TAKEN AND OTHERS ARE FREE
+---------------------------------------------
+Set a class up for 1-15 October on Fridays and one of the two Fridays is
+already taken. The screen now shows every date with its own verdict:
+
+    Fri 02 Oct - free      Fri 09 Oct - taken
+
+and the first, preselected option is:
+
+    Book the 1 free Friday and leave the taken one out
+    02 Oct is booked; the rest are skipped. Same teacher, same time.
+
+Moving the time or giving it to another teacher is still offered, but only
+becomes the default when NO date is free.
+
+THE NUMBER OF CLASSES SURVIVES THIS SCREEN
+Ask for 8 classes, hit a taken date, choose to skip it - you still get
+exactly 8. The skipped date is made up at the end and the finish date moves
+to match. (Before this fix the count was dropped on this screen and you got
+however many the calendar happened to produce.)
+
+
+LONG NAMES ON PRINTED ROUTINES
+------------------------------
+Every PDF table used to cut text until it fitted the column. A one-to-one
+class named "GED SOCIAL STUDIES 1-1 ABDULLAH BIN KABIR" printed without the
+student's name - the one part staff needed. Text now wraps onto a second
+line and the row grows to fit. Nothing is cut.
+
+
+CONFLICTS ARE ON THE DASHBOARD
+------------------------------
+The clash checker has always stopped a NEW class being booked badly. But
+nothing re-checked what was already there. A spreadsheet import, a teacher
+whose days off changed afterwards, a student added to a second class at the
+same hour - none of that was ever flagged.
+
+The dashboard now leads with it. Either:
+
+    11 conflicts on the timetable       with a chip per kind, each one a
+                                        link to the filtered list
+or
+    No conflicts on the timetable       said plainly, so silence means
+                                        checked, not skipped
+
+Five kinds are detected:
+
+    Teacher double-booked   one teacher in two places at once
+    Student double-booked   one student in two places at once
+    On a day off            a class on a day the teacher does not work
+    Outside working hours   a class before they start or after they finish
+    Teaching without a break  more than two classes back to back with no
+                            30-minute gap - the same rule that blocks a new
+                            booking, applied to what is already on the
+                            timetable
+
+That last one matters. The rule has always stopped a THIRD class being
+booked on top of two. It could not stop a run appearing another way: an
+import, a class moved later, a teacher hours change. Four in a row with no
+gap is a welfare problem, so it is now reported like any other conflict, and
+the row lists every class in the run so you can see where the break belongs.
+
+Classes > Conflicts lists them in full, filterable by kind and by how far
+ahead to look, with a line saying exactly what is wrong and buttons to open
+that day or that class. The scan costs about 75 ms, so it runs on every
+dashboard load.
+
+
+TEACHER LOAD ON THE DASHBOARD
+-----------------------------
+Underneath, every teacher for today: how many classes, hours teaching, a bar
+showing how full their day is, and how much is still free.
+
+    red      70% or more of their available hours already teaching
+    amber    40 to 70%
+    green    under 40% - capacity to sell
+
+Anyone not working today is greyed out rather than hidden, so the absence is
+visible. "Full picture & free slots" goes to the workload page.
+
+
+SEVERAL PEOPLE SAVING AT ONCE
+-----------------------------
+SQLite keeps everything in one file. By default it locks that whole file
+while somebody writes, and anyone else who tries at that exact moment is
+refused outright with "database is locked".
+
+Two settings, applied automatically on every connection, remove that:
+
+    journal_mode = WAL     readers carry on while one person writes, rather
+                           than everyone queueing behind a single lock
+    busy_timeout = 15000   a writer waits its turn for up to 15 seconds
+                           instead of failing immediately
+
+A save takes a few milliseconds, so the queue clears long before anyone
+notices. Measured on this database: 40 people saving at the same instant
+all succeeded, in under 6 seconds total. Before the change, 5 out of 6
+simultaneous saves failed.
+
+You will see two extra files next to pie.db - pie.db-wal and pie.db-shm.
+That is normal. When you take a backup, use the Download backup button
+rather than copying pie.db by hand, because the button copies through
+SQLite and picks up the WAL contents too.
+
+
+WHO MAY TOUCH A PIECE OF WORK
+-----------------------------
+One gate, _may_manage(), decides every write on an assessment: setting a
+mark, confirming receipt, publishing, deleting, downloading a file. A teacher
+may manage work they set, work on a subject they run a class for, or work
+they are enrolled to teach. Administrators always may.
+
+Lesson logs, materials and notices follow the same idea - the person who
+wrote it, or anyone teaching that subject, or an administrator.
+
+This matters. Before it existed, ANY teacher could confirm receipt on another
+teacher's assignment, enter marks on it, unpublish it, and permanently delete
+it. The page that listed submissions was protected; the seven routes that
+actually changed things were not.
+
+
+MARKING WORK THAT NEVER CAME THROUGH THE PORTAL
+-----------------------------------------------
+Two separate cases, both handled.
+
+1. A TEST OR MOCK, where nothing is handed in at all.
+   Set the work with "Student must hand work in" UNTICKED. Marks can be
+   entered straight away - no submission, no receipt, no gate.
+   (That tick box used to do nothing: unticked it still demanded a hand-in.
+   Fixed.)
+
+2. WORK COLLECTED ON PAPER, where a hand-in is expected but arrived by hand.
+   On Submissions, each student who has sent nothing shows an "I have it"
+   button with a small note box - type "on paper", "by email", whatever it
+   was. That records receipt and opens marking.
+   To take in a whole stack at once, use "Mark everyone as handed in" at the
+   top with a note such as "Collected in class". Anyone already marked is
+   left alone.
+
+The status a student sees reads "Received" when it came through the portal
+and "In hand" when the teacher recorded it themselves.
+
+
+TEACHER LOAD AND FREE TIME
+--------------------------
+Classes > Teacher load & free time.
+
+Three things on one page:
+
+  THE DAY, STRIP BY STRIP - every teacher across the day in half-hour
+  blocks, coloured for class, break, free and not working. Who is stacked
+  and who has room is obvious at a glance.
+
+  FREE SLOTS - every gap inside working hours, longest first, with a "Put a
+  class here" button that opens the class form with the teacher, day and
+  time already filled in. A slot that follows two back-to-back classes is
+  marked "break needed first", because a booking there has to start after
+  the break.
+
+  TEACHING LOAD THIS WEEK - classes and hours taught per teacher, a bar
+  comparing each against the busiest, and what share of their available
+  hours is used. A high figure means little room left; a low one means
+  capacity to sell.
+
+
 THE REGISTER BELONGS TO A CLASS, NOT A SUBJECT
 ----------------------------------------------
 Two one-to-one students in the same subject sit at different times. They must

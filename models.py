@@ -392,6 +392,8 @@ class Result(db.Model):
     received        = db.Column(db.Boolean, default=False, nullable=False)
     received_at     = db.Column(db.DateTime)
     received_by     = db.Column(db.Integer, db.ForeignKey("user.id"))
+    # how the teacher got it when nothing came through the portal
+    received_note   = db.Column(db.String(255))
     score           = db.Column(db.Float)
     feedback        = db.Column(db.Text)
     marked_at       = db.Column(db.DateTime)
@@ -426,8 +428,19 @@ class Result(db.Model):
         return "Not Submitted"
 
     @property
+    def via_portal(self):
+        """Did the student actually upload or link something?"""
+        return bool(self.file_key or self.submission_link)
+
+    @property
     def can_mark(self):
-        """The marking gate: receipt must be confirmed first."""
+        """
+        Marking is open when the work does not need handing in at all — a
+        test, a mock, an in-class task — or when the teacher has confirmed
+        they have it, whether it arrived through the portal or on paper.
+        """
+        if self.assessment and not self.assessment.needs_submission:
+            return True
         return bool(self.received)
 
 
@@ -478,8 +491,6 @@ class Announcement(db.Model):
         bits = []
         if self.branch:
             bits.append(self.branch)
-        if self.batch:
-            bits.append(self.batch.name)
         return " · ".join(bits) if bits else "Everyone"
 
 
@@ -535,7 +546,8 @@ class ClassGroup(db.Model):
 
     @property
     def student_count(self):
-        return len(self.members)
+        # only people who still exist — a stale membership must not inflate it
+        return sum(1 for m in self.members if m.student is not None)
 
     @property
     def is_indefinite(self):

@@ -235,13 +235,10 @@ def my_routine_pdf():
     start = parse_date(request.args.get("start")) or date.today()
     end   = parse_date(request.args.get("end")) or (start + timedelta(days=30))
 
-    rows = (ClassSchedule.query
-            .filter(ClassSchedule.date >= start, ClassSchedule.date <= end)
-            .filter((ClassSchedule.student_id == sid) |
-                    (ClassSchedule.course_id.in_(
-                        db.session.query(ClassAssignment.course_id)
-                        .filter(ClassAssignment.student_id == sid))))
-            .order_by(ClassSchedule.date, ClassSchedule.start_time).all())
+    # Class membership only. The old query pulled every session under any
+    # course the student was enrolled in, which put other students'
+    # one-to-one classes on their printed routine.
+    rows = get_student_schedule(sid, start, end)
     try:
         data = student_routine_pdf(student, rows, start, end)
     except RuntimeError:

@@ -45,11 +45,13 @@
           </button>
           <div class="nav-menu">
             <a href="{{ url_for('admin.daily') }}">Daily routine &amp; rooms</a>
+            <a href="{{ url_for('admin.workload') }}">Teacher load &amp; free time</a>
             <a href="{{ url_for('admin.calendar', view='day') }}">Today's timetable</a>
             <a href="{{ url_for('admin.calendar', view='week') }}">Week view</a>
             <a href="{{ url_for('admin.classes') }}">All classes</a>
             <a href="{{ url_for('admin.class_new') }}">Set up a class</a>
             <a href="{{ url_for('admin.courses') }}">Subjects</a>
+            <a href="{{ url_for('admin.clashes') }}">Conflicts</a>
             <a href="{{ url_for('admin.data_check') }}">Data check</a>
           </div>
         </div>

@@ -183,7 +183,7 @@
     <table class="list-table">
       <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th></th></tr></thead>
       <tbody>
-      {% for mem in g.members %}
+      {% for mem in g.members if mem.student %}
       <tr>
         <td class="mono sub">{{ mem.student.username }}</td>
         <td><a href="{{ url_for('admin.student_profile', sid=mem.student.id) }}">

@@ -49,9 +49,37 @@
       </span>
     </div>
 
-    <p class="sub" style="margin:0 0 .9rem">{{ prob.res.message }}</p>
+    <p class="sub" style="margin:0 0 .6rem">{{ prob.res.message }}</p>
+
+    {% if prob.res.detail %}
+    <div class="datelist">
+      {% for dd in prob.res.detail %}
+        <span class="dchip {{ 'dfree' if dd.status == 'ok' else 'dtaken' }}"
+              title="{{ dd.message }}">
+          {{ dd.date.strftime('%a %d %b') }} ·
+          {{ 'free' if dd.status == 'ok' else ('break needed' if dd.status == 'break' else 'taken') }}
+        </span>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="fix-list">
+
+      {# the free dates, booked as they are — the most common answer #}
+      {% if prob.res.ok > 0 %}
+      <label class="fix">
+        <input type="radio" name="fix_{{ i }}" value="keep" checked>
+        <span>
+          <strong>Book the {{ prob.res.ok }} free
+            {{ daynames[raw[0]|int] }}{{ '' if prob.res.ok == 1 else 's' }}
+            and leave the taken one{{ '' if (prob.res.total - prob.res.ok) == 1 else 's' }} out</strong>
+          <span class="sub" style="display:block">
+            {% for dd in prob.res.detail if dd.status == 'ok' %}{{ dd.date.strftime('%d %b') }}{{ ', ' if not loop.last }}{% endfor %}
+            {{ 'is' if prob.res.ok == 1 else 'are' }} booked; the rest are skipped. Same teacher, same time.
+          </span>
+        </span>
+      </label>
+      {% endif %}
 
       {# same time, different teacher — the student loses nothing #}
       {% for o in prob.opts.teachers %}
@@ -74,7 +102,7 @@
       <label class="fix">
         <input type="radio" name="fix_{{ i }}"
                value="time:{{ t.start.strftime('%H:%M') }}-{{ t.end.strftime('%H:%M') }}"
-               {{ 'checked' if loop.first and not prob.opts.teachers }}>
+               {{ 'checked' if loop.first and not prob.opts.teachers and prob.res.ok == 0 }}>
         <span>
           <strong>Move to {{ t.start.strftime('%I:%M %p').lstrip('0') }} –
             {{ t.end.strftime('%I:%M %p').lstrip('0') }}</strong>
@@ -96,7 +124,7 @@
 
       <label class="fix">
         <input type="radio" name="fix_{{ i }}" value="skip"
-               {{ 'checked' if not prob.opts.teachers and not prob.opts.times }}>
+               {{ 'checked' if not prob.opts.teachers and not prob.opts.times and prob.res.ok == 0 }}>
         <span>
           <strong>Leave {{ daynames[raw[0]|int] }} out</strong>
           <span class="sub" style="display:block">
@@ -105,18 +133,6 @@
         </span>
       </label>
 
-      {% if prob.res.ok > 0 %}
-      <label class="fix">
-        <input type="radio" name="fix_{{ i }}" value="keep">
-        <span>
-          <strong>Book it anyway</strong>
-          <span class="sub" style="display:block">
-            {{ prob.res.ok }} of the next {{ prob.res.total }} dates are free;
-            the clashing ones are left out.
-          </span>
-        </span>
-      </label>
-      {% endif %}
     </div>
   </div>
 
@@ -149,5 +165,11 @@
 .fix:hover{border-color:var(--ink-soft)}
 .fix:has(input:checked){border-color:var(--red);background:#fffafa}
 .fix input{margin-top:.22rem;flex-shrink:0}
+</style>
+<style>
+.datelist{display:flex;gap:.35rem;flex-wrap:wrap;margin:0 0 .9rem}
+.dchip{font-size:.78rem;padding:.2rem .6rem;border-radius:99px;border:1px solid}
+.dfree{background:#E7F4EC;border-color:#B8E0C6;color:#0B6B3A}
+.dtaken{background:#FDECEE;border-color:#F5C2C8;color:#9E0012}
 </style>
 {% endblock %}

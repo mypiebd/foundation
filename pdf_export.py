@@ -132,13 +132,66 @@ class SchedulePDF(FPDF if HAVE_FPDF else object):
                 self.set_text_color(20, 22, 40)
             fill = i % 2 == 1
             self.set_fill_color(250, 250, 252)
-            for cell, w, a in zip(row, widths, aligns):
-                txt = clean(cell)
-                while self.get_string_width(txt) > w - 2 and len(txt) > 3:
-                    txt = txt[:-2]
-                self.cell(w, 5.6, txt, border="B", align=a, fill=fill)
-            self.ln()
+
+            # Wrap, never clip. A one-to-one class is usually named after its
+            # student, and chopping the end off a long name dropped exactly
+            # the part the reader needed ("...1-1 ABDULLAH BIN KABIR").
+            texts = [clean(c) for c in row]
+            lines = [self._wrap(t, w - 2) for t, w in zip(texts, widths)]
+            n = max(len(l) for l in lines) or 1
+            lh = 4.6
+            row_h = max(5.6, n * lh + 1.0)
+
+            if self.get_y() + row_h > self.h - 18:
+                self.add_page()
+                self.set_font("Helvetica", "B", 7.5)
+                self.set_fill_color(*WASH)
+                self.set_text_color(*GREY)
+                for h, w, a in zip(headers, widths, aligns):
+                    self.cell(w, 6.5, clean(h).upper(), border="B", align=a, fill=True)
+                self.ln()
+                self.set_font("Helvetica", "", 8)
+                self.set_text_color(20, 22, 40)
+                self.set_fill_color(250, 250, 252)
+
+            x0, y0 = self.get_x(), self.get_y()
+            x = x0
+            for cell_lines, w, a in zip(lines, widths, aligns):
+                self.set_xy(x, y0)
+                # the background and the rule for the whole row height
+                self.cell(w, row_h, "", border="B", fill=fill)
+                for k, ln_txt in enumerate(cell_lines):
+                    self.set_xy(x, y0 + 0.5 + k * lh)
+                    self.cell(w, lh, ln_txt, align=a)
+                x += w
+            self.set_xy(x0, y0 + row_h)
         self.ln(1)
+
+    def _wrap(self, text, width):
+        """Break text into lines that fit, on word boundaries."""
+        if not text:
+            return [""]
+        if self.get_string_width(text) <= width:
+            return [text]
+        out, cur = [], ""
+        for word in text.split(" "):
+            trial = (cur + " " + word).strip()
+            if self.get_string_width(trial) <= width:
+                cur = trial
+                continue
+            if cur:
+                out.append(cur)
+            # a single word wider than the column is split, not lost
+            while self.get_string_width(word) > width and len(word) > 1:
+                cut = len(word)
+                while cut > 1 and self.get_string_width(word[:cut]) > width:
+                    cut -= 1
+                out.append(word[:cut])
+                word = word[cut:]
+            cur = word
+        if cur:
+            out.append(cur)
+        return out or [""]
 
 
 def _guard():
@@ -331,8 +384,6 @@ def _student_block(pdf, student, schedules, start, end, note=None,
     pdf.cell(0, 6.5, clean(student.full_name), ln=1)
 
     bits = [f"ID {student.username}"]
-    if getattr(student, "batch", None):
-        bits.append(clean(student.batch.name))
     if student.branch:
         bits.append(clean(student.branch))
     pdf.set_x(15)

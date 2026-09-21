@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Conflicts · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <p class="ph-back"><a href="{{ url_for('admin.overview') }}">&larr; Dashboard</a></p>
+    <h1 class="page-title">Conflicts on the timetable</h1>
+    <p class="page-sub">
+      The clash checker stops a new class being booked badly. This catches
+      what got in another way — an import, a teacher's days off changing
+      afterwards, a student added to a second class at the same hour, or a
+      run of classes that grew back to back with no break.
+    </p>
+  </div>
+</div>
+
+<div class="panel" style="margin-bottom:1.1rem;padding:.7rem .95rem">
+  <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <select class="form-select" name="kind" style="max-width:220px" onchange="this.form.submit()">
+      <option value="">Every kind</option>
+      <option value="teacher"  {{ 'selected' if kind == 'teacher' }}>Teacher double-booked</option>
+      <option value="student"  {{ 'selected' if kind == 'student' }}>Student double-booked</option>
+      <option value="day-off"  {{ 'selected' if kind == 'day-off' }}>On a day off</option>
+      <option value="hours"    {{ 'selected' if kind == 'hours' }}>Outside working hours</option>
+      <option value="no-break" {{ 'selected' if kind == 'no-break' }}>Teaching without a break</option>
+    </select>
+    <select class="form-select" name="days" style="max-width:190px" onchange="this.form.submit()">
+      {% for v, l in [(7,'Next 7 days'),(30,'Next 30 days'),(90,'Next 3 months'),(400,'Everything ahead')] %}
+        <option value="{{ v }}" {{ 'selected' if days == v }}>{{ l }}</option>
+      {% endfor %}
+    </select>
+    {% if kind %}<a class="btn btn-link btn-sm" href="{{ url_for('admin.clashes', days=days) }}">Clear</a>{% endif %}
+    <span class="sub" style="margin-left:auto">{{ rows|length }} shown</span>
+  </form>
+</div>
+
+{% if rows %}
+<div class="panel p-0">
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th style="width:110px">Date</th><th style="width:150px">Problem</th>
+                 <th style="width:170px">Who</th><th>What is wrong</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="nowrap">{{ r.date.strftime('%d %b %Y') }}
+          <div class="sub">{{ r.date.strftime('%A') }}</div></td>
+        <td>
+          {% if r.kind == 'teacher' %}<span class="pill pill-red">Teacher clash</span>
+          {% elif r.kind == 'student' %}<span class="pill pill-red">Student clash</span>
+          {% elif r.kind == 'day-off' %}<span class="pill pill-amber">Day off</span>
+          {% elif r.kind == 'no-break' %}<span class="pill pill-amber">No break</span>
+          {% else %}<span class="pill pill-amber">Outside hours</span>{% endif %}
+        </td>
+        <td class="td-name">{{ r.who }}</td>
+        <td class="sub">
+          {{ r.detail }}
+          {% if r.run %}
+          <div class="run">
+            {% for c in r.run %}
+              <div class="run-row">
+                <span class="mono">{{ c.start_str }}–{{ c.end_str }}</span>
+                <span class="clip">{{ c.task }}</span>
+              </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </td>
+        <td class="nowrap">
+          <a class="btn btn-xs btn-outline"
+             href="{{ url_for('admin.daily', date=r.date.isoformat()) }}">That day</a>
+          {% if r.a and r.a.group_id %}
+            <a class="btn btn-xs btn-outline"
+               href="{{ url_for('admin.class_detail', gid=r.a.group_id) }}">Class</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="panel" style="border-left:3px solid var(--ok)">
+  <p style="margin:0"><strong style="color:var(--ok)">Nothing to fix.</strong>
+    No conflicts of this kind in the period you chose.</p>
+</div>
+{% endif %}
+<style>
+.run{margin-top:.4rem;border-left:2px solid var(--warn,#C8860D);padding-left:.6rem}
+.run-row{display:flex;gap:.55rem;font-size:.8rem;padding:.08rem 0}
+.run-row .mono{min-width:128px;color:var(--ink)}
+</style>
+{% endblock %}

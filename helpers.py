@@ -323,8 +323,8 @@ def student_search(q="", branch=None, batch_id=None, course_id=None,
         )
     if branch:
         query = query.filter_by(branch=branch)
-    if batch_id:
-        query = query.filter_by(batch_id=batch_id)
+    # batch_id is accepted so older callers still work, but batches were
+    # retired in v12 and the column no longer exists, so it filters nothing
     if course_id:
         enrolled_ids = [a.student_id for a in
                         ClassAssignment.query.filter_by(course_id=course_id).all()]
@@ -454,11 +454,12 @@ def students_csv(people, summaries):
         s = summaries.get(p.id, {})
         rows.append([
             p.username, p.full_name, p.phone or "", p.email or "",
-            p.branch or "", p.batch.name if p.batch else "",
+            p.branch or "",
+            "; ".join(g.name for g in student_classes(p.id)),
             p.status, s.get("held", 0), s.get("attended", 0), s.get("percent", 0)
         ])
     return csv_response("students.csv",
-                        ["ID", "Name", "Phone", "Email", "Branch", "Batch",
+                        ["ID", "Name", "Phone", "Email", "Branch", "Classes",
                          "Status", "Classes Held", "Attended", "Attendance %"],
                         rows)
 
@@ -1281,6 +1282,10 @@ def analyse_slot(teacher_id, weekday, st, en, student_ids, start, end=None,
         "bad_dates": [d for d, _ in bad],
         "sample": bad[0][0] if bad else dates[0],
         "dates": dates,
+        # each date with its own verdict, so a screen can say exactly which
+        # Friday is free and which is taken rather than just counting them
+        "detail": [{"date": d, "status": v["status"], "message": v["message"]}
+                   for d, v in verdicts],
     }
 
 
@@ -1667,3 +1672,391 @@ def backup_database():
     with sqlite3.connect(src) as s, sqlite3.connect(tmp) as d:
         s.backup(d)
     return tmp, name
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  WHO IS BUSY, WHO IS FREE
+# ═══════════════════════════════════════════════════════════════════════════
+
+def teacher_day_grid(on_date, slot_mins=30):
+    """
+    One day, every teacher, laid out in equal strips.
+
+    Each strip is "class", "break", "off" (outside their hours or a day off)
+    or "free". This is what makes it obvious at a glance who is stacked and
+    who has room, which a list of classes never shows.
+    """
+    from models import ClassSchedule, TeacherBlock
+
+    teachers = active_teachers()
+    day_start, day_end = 10 * 60, 20 * 60 + 30
+    for t in teachers:
+        span = t.hours_on(on_date)
+        if span:
+            day_start = min(day_start, span[0].hour * 60 + span[0].minute)
+            day_end = max(day_end, span[1].hour * 60 + span[1].minute)
+    marks = list(range(day_start, day_end, slot_mins))
+
+    rows = []
+    for t in teachers:
+        span = t.hours_on(on_date)
+        classes = (ClassSchedule.query
+                   .filter(ClassSchedule.teacher_id == t.id,
+                           ClassSchedule.date == on_date,
+                           ClassSchedule.status != "Cancelled").all())
+        blocks = [b for b in TeacherBlock.query.filter_by(teacher_id=t.id).all()
+                  if (b.on_date == on_date
+                      or (b.on_date is None and b.weekday == on_date.weekday()))]
+        cells, free_mins = [], 0
+        for m in marks:
+            a, b = m, m + slot_mins
+            if not span or a < span[0].hour * 60 + span[0].minute \
+                    or b > span[1].hour * 60 + span[1].minute:
+                cells.append({"state": "off", "label": ""})
+                continue
+            hit = next((c for c in classes
+                        if c.start_mins < b and c.end_mins > a), None)
+            if hit:
+                cells.append({"state": "class", "label": hit.task or "Class",
+                              "id": hit.id})
+                continue
+            blk = next((x for x in blocks
+                        if x.start_time.hour * 60 + x.start_time.minute < b
+                        and x.end_time.hour * 60 + x.end_time.minute > a), None)
+            if blk:
+                cells.append({"state": "break", "label": blk.label or "Break"})
+                continue
+            cells.append({"state": "free", "label": ""})
+            free_mins += slot_mins
+
+        taught = sum((c.end_mins - c.start_mins) for c in classes
+                     if c.class_type != "Break")
+        rows.append({
+            "teacher": t, "cells": cells,
+            "classes": len([c for c in classes if c.class_type != "Break"]),
+            "taught_mins": taught, "free_mins": free_mins,
+            "working": bool(span),
+            "hours": (f"{fmt(span[0])} – {fmt(span[1])}" if span else "not working"),
+        })
+    rows.sort(key=lambda r: (not r["working"], -r["taught_mins"]))
+    return {"marks": marks, "rows": rows, "slot_mins": slot_mins,
+            "labels": [to_time(m) for m in marks]}
+
+
+def free_gaps(on_date, min_mins=60):
+    """
+    Every usable gap on one date, longest first.
+
+    A gap is time inside a teacher's working hours with no class and no
+    protected block. Anything shorter than min_mins is not worth selling.
+    """
+    from models import ClassSchedule, TeacherBlock
+
+    out = []
+    for t in active_teachers():
+        span = t.hours_on(on_date)
+        if not span:
+            continue
+        busy = []
+        for c in (ClassSchedule.query
+                  .filter(ClassSchedule.teacher_id == t.id,
+                          ClassSchedule.date == on_date,
+                          ClassSchedule.status != "Cancelled").all()):
+            busy.append((c.start_mins, c.end_mins))
+        for b in TeacherBlock.query.filter_by(teacher_id=t.id).all():
+            if b.on_date == on_date or (b.on_date is None
+                                        and b.weekday == on_date.weekday()):
+                busy.append((b.start_time.hour * 60 + b.start_time.minute,
+                             b.end_time.hour * 60 + b.end_time.minute))
+        busy.sort()
+        merged = []
+        for a, z in busy:
+            if merged and a <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], z))
+            else:
+                merged.append((a, z))
+        cur = span[0].hour * 60 + span[0].minute
+        close = span[1].hour * 60 + span[1].minute
+        raw = []
+        for a, z in merged:
+            if a - cur >= min_mins:
+                raw.append((cur, a))
+            cur = max(cur, z)
+        if close - cur >= min_mins:
+            raw.append((cur, close))
+
+        for a, z in raw:
+            # the gap is free of classes, but a booking at the very start may
+            # still breach the break-after-two rule, so say so rather than
+            # offering a slot that will be refused
+            verdict = check_slot(t.id, on_date, to_time(a),
+                                 to_time(min(a + 60, z)))
+            out.append({"teacher": t, "start": to_time(a), "end": to_time(z),
+                        "mins": z - a,
+                        "needs_break": verdict["status"] == "break",
+                        "note": verdict["message"] if verdict["status"] == "break" else ""})
+    return sorted(out, key=lambda g: (-g["mins"], g["teacher"].full_name))
+
+
+def teacher_week_load(start, days=7):
+    """Taught minutes and free minutes per teacher over a week."""
+    rows = {}
+    for i in range(days):
+        d = start + timedelta(days=i)
+        grid = teacher_day_grid(d)
+        for r in grid["rows"]:
+            k = r["teacher"].id
+            if k not in rows:
+                rows[k] = {"teacher": r["teacher"], "taught": 0, "free": 0,
+                           "classes": 0, "days": 0, "per_day": []}
+            rows[k]["taught"] += r["taught_mins"]
+            rows[k]["free"] += r["free_mins"]
+            rows[k]["classes"] += r["classes"]
+            rows[k]["days"] += 1 if r["working"] else 0
+            rows[k]["per_day"].append({"date": d, "mins": r["taught_mins"],
+                                       "working": r["working"]})
+    out = list(rows.values())
+    busiest = max((r["taught"] for r in out), default=0) or 1
+    for r in out:
+        r["share"] = round(r["taught"] / busiest * 100)
+        total = r["taught"] + r["free"]
+        r["used"] = round(r["taught"] / total * 100) if total else 0
+    return sorted(out, key=lambda r: -r["taught"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  HEALTH — what is actually wrong with the timetable, right now
+# ═══════════════════════════════════════════════════════════════════════════
+
+def find_clashes(start=None, end=None, limit=None):
+    """
+    Every real conflict on the timetable.
+
+    The clash checker stops a *new* class being created badly, but nothing
+    was ever re-checking what is already booked. Data imported from a
+    spreadsheet, a teacher whose days off changed afterwards, a student added
+    to a second class — all of these create conflicts that no one is told
+    about. This finds them.
+
+    Five kinds, each with enough detail to act on:
+      teacher   one teacher in two places at once
+      student   one student in two places at once
+      day-off   a class on a day the teacher does not work
+      hours     a class outside the teacher's working hours
+      no-break  more than BREAK_AFTER classes back to back with no real gap
+    """
+    from collections import defaultdict
+    from models import ClassGroup, ClassSchedule, GroupStudent, User
+
+    start = start or date.today()
+    q = (ClassSchedule.query
+         .filter(ClassSchedule.status != "Cancelled",
+                 ClassSchedule.class_type != "Break",
+                 ClassSchedule.date >= start))
+    if end:
+        q = q.filter(ClassSchedule.date <= end)
+    rows = q.order_by(ClassSchedule.date, ClassSchedule.start_time).all()
+
+    out = []
+
+    # ── one teacher, two places ─────────────────────────────────────────
+    by_teacher = defaultdict(list)
+    for c in rows:
+        if c.teacher_id:
+            by_teacher[(c.teacher_id, c.date)].append(c)
+    for (tid, d), items in by_teacher.items():
+        items.sort(key=lambda x: (x.start_mins, x.end_mins))
+        for a, b in zip(items, items[1:]):
+            if b.start_mins < a.end_mins:
+                out.append({
+                    "kind": "teacher", "date": d,
+                    "who": a.teacher.full_name if a.teacher else "?",
+                    "who_id": tid,
+                    "a": a, "b": b,
+                    "detail": (f"{a.task or 'a class'} ({a.start_str}–{a.end_str}) "
+                               f"overlaps {b.task or 'a class'} "
+                               f"({b.start_str}–{b.end_str})"),
+                })
+
+    # ── one student, two places ─────────────────────────────────────────
+    members = defaultdict(list)
+    for m in GroupStudent.query.all():
+        members[m.group_id].append(m.student_id)
+    by_student = defaultdict(list)
+    for c in rows:
+        ids = set()
+        if c.student_id:
+            ids.add(c.student_id)
+        if c.group_id:
+            ids.update(members.get(c.group_id, []))
+        for sid in ids:
+            by_student[(sid, c.date)].append(c)
+    for (sid, d), items in by_student.items():
+        items.sort(key=lambda x: (x.start_mins, x.end_mins))
+        for a, b in zip(items, items[1:]):
+            if b.start_mins < a.end_mins:
+                who = db.session.get(User, sid)
+                out.append({
+                    "kind": "student", "date": d,
+                    "who": who.full_name if who else "?", "who_id": sid,
+                    "a": a, "b": b,
+                    "detail": (f"{a.task or 'a class'} ({a.start_str}) "
+                               f"clashes with {b.task or 'a class'} ({b.start_str})"),
+                })
+
+    # ── on a day off, or outside working hours ──────────────────────────
+    for c in rows:
+        t = c.teacher
+        if not t:
+            continue
+        if c.date.weekday() in t.off_days:
+            out.append({
+                "kind": "day-off", "date": c.date, "who": t.full_name,
+                "who_id": t.id, "a": c, "b": None,
+                "detail": (f"{c.task or 'a class'} at {c.start_str}, but "
+                           f"{t.full_name} does not work on "
+                           f"{DAY_NAMES[c.date.weekday()]}s"),
+            })
+            continue
+        span = t.hours_on(c.date)
+        if span and (c.start_time < span[0] or c.end_time > span[1]):
+            out.append({
+                "kind": "hours", "date": c.date, "who": t.full_name,
+                "who_id": t.id, "a": c, "b": None,
+                "detail": (f"{c.task or 'a class'} runs {c.start_str}–{c.end_str}, "
+                           f"outside {t.full_name}'s {fmt(span[0])}–{fmt(span[1])}"),
+            })
+
+    # ── too many back to back ───────────────────────────────────────────
+    #
+    # The break rule stops a THIRD class being booked on top of two, but a
+    # run can still appear another way: an import, a class moved later, a
+    # teacher's hours changed. A teacher with four in a row and no gap is a
+    # real welfare problem, so it is reported like any other conflict.
+    for (tid, d), items in by_teacher.items():
+        items = sorted(items, key=lambda x: (x.start_mins, x.end_mins))
+        run = [items[0]]
+        runs = []
+        for prev, cur in zip(items, items[1:]):
+            if cur.start_mins - prev.end_mins < BREAK_MINS:
+                run.append(cur)
+            else:
+                if len(run) > BREAK_AFTER:
+                    runs.append(list(run))
+                run = [cur]
+        if len(run) > BREAK_AFTER:
+            runs.append(list(run))
+
+        for r in runs:
+            t = r[0].teacher
+            gap = r[1].start_mins - r[0].end_mins if len(r) > 1 else 0
+            out.append({
+                "kind": "no-break", "date": d,
+                "who": t.full_name if t else "?", "who_id": tid,
+                "a": r[0], "b": r[-1], "run": r,
+                "detail": (f"{len(r)} classes back to back, "
+                           f"{r[0].start_str} to {r[-1].end_str}"
+                           + (f", longest gap {gap} min" if gap else ", no gap at all")
+                           + f". The rule allows {BREAK_AFTER} before a "
+                             f"{BREAK_MINS}-minute break."),
+            })
+
+    out.sort(key=lambda x: (x["date"], x["kind"], x["who"]))
+    return out[:limit] if limit else out
+
+
+def clash_summary(days_ahead=30):
+    """Counts only — cheap enough to run on every dashboard load."""
+    end = date.today() + timedelta(days=days_ahead)
+    rows = find_clashes(date.today(), end)
+    out = {"teacher": 0, "student": 0, "day-off": 0, "hours": 0, "no-break": 0}
+    for r in rows:
+        out[r["kind"]] = out.get(r["kind"], 0) + 1
+    out["total"] = len(rows)
+    out["window"] = days_ahead
+    # the soonest one, so the dashboard can say how urgent it is
+    out["first"] = rows[0]["date"] if rows else None
+    return out
+
+
+def teacher_load_today(on_date=None):
+    """
+    A one-line load figure per teacher for the dashboard.
+    Busiest first, so an unbalanced day is obvious immediately.
+    """
+    on_date = on_date or date.today()
+    grid = teacher_day_grid(on_date)
+    rows = []
+    for r in grid["rows"]:
+        total = r["taught_mins"] + r["free_mins"]
+        rows.append({
+            "teacher": r["teacher"], "classes": r["classes"],
+            "taught": r["taught_mins"], "free": r["free_mins"],
+            "working": r["working"],
+            "used": round(r["taught_mins"] / total * 100) if total else 0,
+        })
+    return rows
+
+
+def purge_student(student):
+    """
+    Remove a student and everything that belongs only to them.
+
+    The database enforces nothing on delete, so the app has to. Relying on
+    the model's cascades left class memberships behind: the deleted student
+    stayed on the class roll as a blank row, the class count was one too high,
+    and the class page crashed trying to link to someone who no longer
+    existed. This clears every row that refers to the student explicitly.
+
+    Returns a short description of what was removed, for the activity log.
+    """
+    from models import (Attendance, ClassAssignment, ClassSchedule,
+                        GroupStudent, Result, ScheduleAttendance)
+    sid = student.id
+    removed = {
+        "memberships": GroupStudent.query.filter_by(student_id=sid).delete(
+            synchronize_session=False),
+        "enrolments": ClassAssignment.query.filter_by(student_id=sid).delete(
+            synchronize_session=False),
+        "marks": Result.query.filter_by(student_id=sid).delete(
+            synchronize_session=False),
+        "attendance": Attendance.query.filter_by(student_id=sid).delete(
+            synchronize_session=False),
+        "registers": ScheduleAttendance.query.filter_by(student_id=sid).delete(
+            synchronize_session=False),
+    }
+    # A session booked for this student alone goes with them; a session that
+    # belongs to a class keeps running for everyone else, minus this name.
+    removed["own sessions"] = (ClassSchedule.query
+        .filter(ClassSchedule.student_id == sid,
+                ClassSchedule.group_id.is_(None))
+        .delete(synchronize_session=False))
+    (ClassSchedule.query
+        .filter(ClassSchedule.student_id == sid,
+                ClassSchedule.group_id.isnot(None))
+        .update({"student_id": None}, synchronize_session=False))
+    db.session.delete(student)
+    return ", ".join(f"{n} {k}" for k, n in removed.items() if n) or "nothing else"
+
+
+def clean_orphans():
+    """
+    Remove rows that point at a student who no longer exists.
+    Safe to run any time; returns counts so the caller can report them.
+    """
+    from sqlalchemy import text
+    out = {}
+    for table in ["group_student", "class_assignment", "result",
+                  "attendance", "schedule_attendance"]:
+        n = db.session.execute(text(
+            f"DELETE FROM {table} WHERE student_id IS NOT NULL "
+            f"AND student_id NOT IN (SELECT id FROM user)")).rowcount
+        if n:
+            out[table] = n
+    n = db.session.execute(text(
+        "UPDATE class_schedule SET student_id = NULL WHERE student_id IS NOT NULL "
+        "AND student_id NOT IN (SELECT id FROM user) AND group_id IS NOT NULL")).rowcount
+    if n:
+        out["class_schedule (student link cleared)"] = n
+    db.session.commit()
+    return out

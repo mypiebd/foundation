@@ -4,6 +4,8 @@ from datetime import date
 
 from flask import (Flask, abort, flash, redirect, render_template,
                    request, send_from_directory, url_for)
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from flask_login import (LoginManager, current_user, login_required,
                          login_user, logout_user)
 
@@ -167,6 +169,27 @@ def create_app():
     app.register_blueprint(viewer_bp)
 
     # ── seed ─────────────────────────────────────────────────────────────────
+    # ── how SQLite behaves when several people save at once ─────────────
+    #
+    # By default SQLite locks the whole file for a write and gives up
+    # instantly if somebody else holds it, which shows the person a "database
+    # is locked" error. Two settings fix that:
+    #
+    #   WAL        readers carry on while one person writes, instead of
+    #              everybody queueing behind a single lock
+    #   busy_timeout  a writer waits its turn for up to 15 seconds rather
+    #              than failing at once — a save takes milliseconds, so the
+    #              queue clears long before anyone notices
+    #
+    # Together these turn a visible error into a short, invisible wait.
+    @event.listens_for(Engine, "connect")
+    def _sqlite_pragmas(dbapi_connection, _record):
+        cur = dbapi_connection.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=15000")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
+
     with app.app_context():
         db.create_all()
         _seed()

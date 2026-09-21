@@ -15,6 +15,93 @@
   </div>
 </div>
 
+{# ── is anything actually wrong? ───────────────────────────────── #}
+{% if clashes.total %}
+<div class="panel p-0" style="margin-bottom:1.25rem;border-left:3px solid var(--red)">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0;color:var(--red)">
+      {{ clashes.total }} conflict{{ '' if clashes.total == 1 else 's' }} on the timetable
+    </h2>
+    <span class="sub">
+      next {{ clashes.window }} days{% if clashes.first %} &middot; first on
+      {{ clashes.first.strftime('%a %d %b') }}{% endif %}
+    </span>
+  </div>
+  <div style="padding:.5rem 1.15rem .9rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    {% if clashes.teacher %}
+      <a class="chip chip-red" href="{{ url_for('admin.clashes', kind='teacher') }}">
+        <b>{{ clashes.teacher }}</b> teacher double-booked</a>
+    {% endif %}
+    {% if clashes.student %}
+      <a class="chip chip-red" href="{{ url_for('admin.clashes', kind='student') }}">
+        <b>{{ clashes.student }}</b> student double-booked</a>
+    {% endif %}
+    {% if clashes['day-off'] %}
+      <a class="chip chip-amber" href="{{ url_for('admin.clashes', kind='day-off') }}">
+        <b>{{ clashes['day-off'] }}</b> on a day off</a>
+    {% endif %}
+    {% if clashes.hours %}
+      <a class="chip chip-amber" href="{{ url_for('admin.clashes', kind='hours') }}">
+        <b>{{ clashes.hours }}</b> outside working hours</a>
+    {% endif %}
+    {% if clashes['no-break'] %}
+      <a class="chip chip-amber" href="{{ url_for('admin.clashes', kind='no-break') }}">
+        <b>{{ clashes['no-break'] }}</b> teaching without a break</a>
+    {% endif %}
+    <a class="btn btn-sm btn-primary" href="{{ url_for('admin.clashes') }}"
+       style="margin-left:auto">See them all</a>
+  </div>
+</div>
+{% else %}
+<div class="panel" style="margin-bottom:1.25rem;border-left:3px solid var(--ok);
+     padding:.75rem 1.15rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+  <strong style="color:var(--ok)">No conflicts on the timetable.</strong>
+  <span class="sub">Nobody is double-booked, nothing runs on a day off or
+    outside working hours, and no one is teaching too long without a break,
+    for the next {{ clashes.window }} days.</span>
+  <a class="sub" href="{{ url_for('admin.clashes') }}" style="margin-left:auto">Check again</a>
+</div>
+{% endif %}
+
+{# ── how today is spread across the team ───────────────────────── #}
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0">Teacher load today</h2>
+    <a class="sub" href="{{ url_for('admin.workload') }}">Full picture &amp; free slots</a>
+  </div>
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Teacher</th><th>Classes</th><th>Teaching</th>
+        <th style="width:200px">How full the day is</th><th>Free</th></tr></thead>
+      <tbody>
+      {% for r in load %}
+      <tr>
+        <td class="td-name">{{ r.teacher.full_name }}
+          {% if not r.working %}<span class="sub"> &middot; not in today</span>{% endif %}</td>
+        <td class="mono">{{ r.classes }}</td>
+        <td class="mono nowrap">{{ r.taught // 60 }}h {{ '%02d'|format(r.taught % 60) }}m</td>
+        <td>
+          {% if r.working %}
+            <div class="loadbar" title="{{ r.used }}% of available time">
+              <span class="{{ 'hot' if r.used >= 70 else ('mid' if r.used >= 40 else 'cool') }}"
+                    style="width:{{ r.used }}%"></span>
+            </div>
+          {% else %}<span class="sub">—</span>{% endif %}
+        </td>
+        <td class="mono nowrap" style="color:{{ 'var(--ok)' if r.free >= 120 else 'inherit' }}">
+          {% if r.working %}{{ r.free // 60 }}h {{ '%02d'|format(r.free % 60) }}m{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="padding:.6rem 1.15rem 0">
+    Red is 70% or more of their available hours already teaching — little room
+    left. Green is under 40% — capacity to sell.
+  </p>
+</div>
+
 {% if expiring %}
 {% set urgent = expiring | selectattr('days','lt',15) | list %}
 <div class="panel p-0" style="margin-bottom:1.25rem;
@@ -308,3 +395,17 @@ if (w) w.addEventListener('change', function () {
 });
 </script>
 {% endblock %}
+
+<style>
+.chip{display:inline-flex;align-items:center;gap:.35rem;padding:.3rem .7rem;
+  border-radius:99px;font-size:.82rem;text-decoration:none;border:1px solid}
+.chip b{font-size:.95rem}
+.chip-red{background:#FDECEE;border-color:#F5C2C8;color:var(--reddk)}
+.chip-amber{background:var(--warnw,#FDF3E6);border-color:#F3D8AE;color:#8A4B08}
+.chip:hover{filter:brightness(.96)}
+.loadbar{background:var(--line2);border-radius:99px;height:9px;overflow:hidden}
+.loadbar span{display:block;height:100%;border-radius:99px}
+.loadbar .hot{background:var(--red)}
+.loadbar .mid{background:#C8860D}
+.loadbar .cool{background:var(--ok)}
+</style>

@@ -255,6 +255,9 @@ def delete_lesson(lid):
     ll = db.session.get(LessonLog, lid)
     if not ll:
         abort(404)
+    if not (current_user.is_admin or ll.teacher_id == current_user.id
+            or _may_manage_course(ll.course_id)):
+        abort(403)
     cid = ll.course_id
     db.session.delete(ll)
     db.session.commit()
@@ -282,7 +285,10 @@ def create_work(cid):
         assigned_date=parse_date(request.form.get("assigned_date")) or date.today(),
         due_date=parse_date(request.form.get("due_date")),
         max_score=float(request.form.get("max_score",100) or 100),
-        needs_submission=request.form.get("needs_submission","1") == "1",
+        # a checkbox sends nothing when unticked, so defaulting to "1" made
+        # every piece of work require a hand-in and the box did nothing
+        needs_submission=request.form.get("needs_submission") in
+                         ("1", "on", "true", "yes"),
         is_published=request.form.get("is_published","1") == "1",
     )
     db.session.add(a)
@@ -301,10 +307,13 @@ def create_work(cid):
 
     db.session.commit()
     n = sync_assessment_rows(a)
-    if a.needs_submission and n == 0:
+    if n == 0:
+        # true for a mock as much as for an assignment: with nobody on the
+        # subject there is nobody to hand it to, or to mark
+        what = "hand it in" if a.needs_submission else "be marked for it"
         flash(f"'{title}' was created, but no student is attached to "
               f"{a.course.course_code if a.course else 'this subject'} yet, so "
-              f"nobody can hand it in. Add students to a class first.", "warning")
+              f"nobody can {what}. Add students to a class first.", "warning")
         return redirect(url_for("teacher.course", cid=cid, tab="work"))
     flash(f"'{title}' assigned to {n} student(s)"
           + (f" with {a.attachment_name}." if a.attachment_key else "."),
@@ -319,6 +328,8 @@ def toggle_publish(aid):
     a = db.session.get(Assessment, aid)
     if not a:
         abort(404)
+    if not _may_manage(a):
+        abort(403)
     a.is_published = not a.is_published
     db.session.commit()
     return redirect(url_for("teacher.course", cid=a.course_id, tab="work"))
@@ -331,6 +342,8 @@ def delete_work(aid):
     a = db.session.get(Assessment, aid)
     if not a:
         abort(404)
+    if not _may_manage(a):
+        abort(403)
     cid = a.course_id
     db.session.delete(a)
     db.session.commit()
@@ -347,6 +360,8 @@ def save_marks(aid):
     a = db.session.get(Assessment, aid)
     if not a:
         abort(404)
+    if not _may_manage(a):
+        abort(403)
     students = _my_students(a.course_id)
     saved = 0
     blocked = []
@@ -360,7 +375,7 @@ def save_marks(aid):
             r = Result(assessment_id=aid, student_id=s.id)
             db.session.add(r)
         if score_raw:
-            if a.needs_submission and not r.received:
+            if not r.can_mark:
                 blocked.append(s.full_name)
                 continue
             try:
@@ -472,6 +487,9 @@ def delete_material(mid):
     m = db.session.get(CourseMaterial, mid)
     if not m:
         abort(404)
+    if not (current_user.is_admin or m.teacher_id == current_user.id
+            or _may_manage_course(m.course_id)):
+        abort(403)
     cid = m.course_id
     if not m.is_link:
         dest = os.path.join(current_app.config["UPLOAD_FOLDER"], m.file_path_or_link)
@@ -515,6 +533,8 @@ def delete_notice(nid):
     n = db.session.get(Announcement, nid)
     if not n:
         abort(404)
+    if not (current_user.is_admin or n.author_id == current_user.id):
+        abort(403)
     cid = n.course_id
     db.session.delete(n)
     db.session.commit()
@@ -764,6 +784,43 @@ def my_schedule_pdf():
 
 # ─────────────────────────────────────────── submissions ────────────────────
 
+# ─── one gate for every write on a piece of work ───────────────────────
+
+def _may_manage_course(course_id):
+    """May the signed-in teacher manage things on this subject?"""
+    if current_user.is_admin:
+        return True
+    if not course_id:
+        return False
+    if ClassGroup.query.filter_by(course_id=course_id,
+                                  teacher_id=current_user.id).first():
+        return True
+    return bool(ClassAssignment.query.filter_by(
+        course_id=course_id, teacher_id=current_user.id).first())
+
+
+def _may_manage(a):
+    """
+    May the signed-in teacher manage this piece of work?
+
+    True when they set it, when they run a class on the subject, or when they
+    are enrolled to teach it. Admins always may. Every write route on an
+    assessment goes through this — the view already did, but the three write
+    routes did not, which let any teacher mark another teacher's work.
+    """
+    if not a:
+        return False
+    if current_user.is_admin:
+        return True
+    if a.teacher_id == current_user.id:
+        return True
+    if ClassGroup.query.filter_by(course_id=a.course_id,
+                                  teacher_id=current_user.id).first():
+        return True
+    return bool(ClassAssignment.query.filter_by(
+        course_id=a.course_id, teacher_id=current_user.id).first())
+
+
 @bp.route("/teacher/work/<int:aid>/submissions")
 @login_required
 @teacher_only
@@ -772,11 +829,8 @@ def submissions(aid):
     a = db.session.get(Assessment, aid)
     if not a:
         abort(404)
-    if not current_user.is_admin and a.teacher_id and a.teacher_id != current_user.id:
-        assigned = ClassAssignment.query.filter_by(
-            course_id=a.course_id, teacher_id=current_user.id).first()
-        if not assigned:
-            abort(403)
+    if not _may_manage(a):
+        abort(403)
     # anyone added to the subject after the work was set still needs a row,
     # and anyone who submitted without one must not be lost
     sync_assessment_rows(a)
@@ -804,25 +858,66 @@ def submissions(aid):
 @login_required
 @teacher_only
 def confirm_received(rid):
-    """The acknowledgement step that unlocks marking."""
+    """
+    Confirm the work is in hand.
+
+    It does not have to have come through the portal. A student may hand in
+    paper in class, email it, or bring a notebook — the teacher records that
+    they have it, with a note saying how, and marking opens up.
+    """
     r = db.session.get(Result, rid)
     if not r:
         abort(404)
-    if not (r.submitted_at or r.file_key or r.submission_link):
-        flash("Nothing has been handed in for this student yet.", "danger")
-        return redirect(url_for("teacher.submissions", aid=r.assessment_id))
-    turn_off = request.form.get("undo") == "1"
-    if turn_off:
-        r.received, r.received_at, r.received_by = False, None, None
+    if not _may_manage(r.assessment):
+        abort(403)
+    if request.form.get("undo") == "1":
+        r.received, r.received_at = False, None
+        r.received_by, r.received_note = None, None
+        db.session.commit()
         flash("Receipt withdrawn. Marking is locked again.", "info")
-    else:
+        return redirect(url_for("teacher.submissions", aid=r.assessment_id))
+
+    note = (request.form.get("received_note") or "").strip()
+    if not r.via_portal and not note:
+        note = "Handed in outside the portal"
+    r.received = True
+    r.received_at = datetime.utcnow()
+    r.received_by = current_user.id
+    r.received_note = note[:255] or None
+    db.session.commit()
+    log_action("work-received",
+               f"{r.assessment.title}: {r.student.full_name}"
+               + (f" ({note})" if note else ""))
+    flash(f"Receipt confirmed for {r.student.full_name}. "
+          f"You can enter marks now.", "success")
+    return redirect(url_for("teacher.submissions", aid=r.assessment_id))
+
+
+@bp.route("/teacher/work/<int:aid>/received-all", methods=["POST"])
+@login_required
+@teacher_only
+def receive_all(aid):
+    """Everyone handed something in — a stack of papers collected in class."""
+    a = db.session.get(Assessment, aid)
+    if not a:
+        abort(404)
+    if not _may_manage(a):
+        abort(403)
+    note = (request.form.get("received_note") or "Collected in class").strip()
+    n = 0
+    for r in Result.query.filter_by(assessment_id=aid).all():
+        if r.received or r.score is not None:
+            continue
         r.received = True
         r.received_at = datetime.utcnow()
         r.received_by = current_user.id
-        flash(f"Receipt confirmed for {r.student.full_name}. "
-              f"You can enter marks now.", "success")
+        r.received_note = note[:255]
+        n += 1
     db.session.commit()
-    return redirect(url_for("teacher.submissions", aid=r.assessment_id))
+    log_action("work-received", f"{a.title}: {n} marked as received ({note})")
+    flash(f"{n} student(s) recorded as handed in. You can mark them now."
+          if n else "Everyone was already recorded.", "success" if n else "info")
+    return redirect(url_for("teacher.submissions", aid=aid))
 
 
 @bp.route("/teacher/submission/<int:rid>/mark", methods=["POST"])
@@ -833,8 +928,11 @@ def mark_one(rid):
     r = db.session.get(Result, rid)
     if not r:
         abort(404)
-    if not r.received:
-        flash("Confirm you have received the work before marking it.", "danger")
+    if not _may_manage(r.assessment):
+        abort(403)
+    if not r.can_mark:
+        flash("Tick that you have the work before marking it — "
+              "or set the work so it does not need handing in.", "danger")
         return redirect(url_for("teacher.submissions", aid=r.assessment_id))
     raw = request.form.get("score", "").strip()
     if raw:
@@ -864,6 +962,8 @@ def download_brief(aid):
     a = db.session.get(Assessment, aid)
     if not a or not a.attachment_key:
         abort(404)
+    if not _may_manage(a):
+        abort(403)
     p = upload_path(a.attachment_key)
     if not p:
         abort(404)
@@ -878,12 +978,8 @@ def download_submission(rid):
     r = db.session.get(Result, rid)
     if not r or not r.file_key:
         abort(404)
-    a = r.assessment
-    if not current_user.is_admin:
-        mine = ClassAssignment.query.filter_by(
-            course_id=a.course_id, teacher_id=current_user.id).first()
-        if a.teacher_id != current_user.id and not mine:
-            abort(403)
+    if not _may_manage(r.assessment):
+        abort(403)
     p = upload_path(r.file_key)
     if not p:
         abort(404)

@@ -16,17 +16,40 @@
   </div>
 </div>
 
-<div class="alert alert-info">
-  <div>Confirm you have the work before entering a mark. That way a student
-    always knows whether it reached you.</div>
+{% if a.needs_submission %}
+<div class="panel" style="margin-bottom:1.1rem;padding:.8rem 1rem">
+  <div style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+    <div style="flex:1;min-width:210px">
+      <label class="form-label">Collected the work on paper?</label>
+      <input class="form-control" name="received_note" form="allIn"
+             placeholder="e.g. Collected in class, 12 Oct">
+      <div class="form-hint">
+        Records everyone still outstanding as handed in, so you can mark them.
+        Nobody already marked is touched.
+      </div>
+    </div>
+    <form method="post" id="allIn"
+          action="{{ url_for('teacher.receive_all', aid=a.id) }}">
+      <button class="btn btn-primary">Mark everyone as handed in</button>
+    </form>
+  </div>
 </div>
+{% else %}
+<div class="alert alert-info">
+  <div><strong>No hand-in needed for this one.</strong>
+    It is a test, mock or in-class task — enter marks straight away.</div>
+</div>
+{% endif %}
 
 <div class="panel p-0">
   <div class="table-responsive">
     <table class="list-table">
       <thead>
-        <tr><th>Student</th><th>Handed in</th><th>File / link</th><th>Status</th>
-            <th>Receipt</th><th style="width:210px">Mark</th></tr>
+        <tr><th>Student</th>
+            {% if a.needs_submission %}<th>Handed in</th><th>File / link</th>{% endif %}
+            <th>Status</th>
+            {% if a.needs_submission %}<th style="width:210px">Have you got it?</th>{% endif %}
+            <th style="width:220px">Mark</th></tr>
       </thead>
       <tbody>
       {% for row in rows %}
@@ -34,6 +57,8 @@
         <tr>
           <td><div class="td-name">{{ row.student.full_name }}</div>
               <div class="sub mono">{{ row.student.username }}</div></td>
+
+          {% if a.needs_submission %}
           <td class="sub nowrap">
             {% if r.submitted_at %}{{ r.submitted_at.strftime('%d %b %H:%M') }}
             {% else %}&mdash;{% endif %}
@@ -41,54 +66,69 @@
           <td>
             {% if r.file_key %}
               <a href="{{ url_for('teacher.download_submission', rid=r.id) }}"
-                 class="clip" style="max-width:180px;display:inline-block">{{ r.file_name }}</a>
+                 class="clip" style="max-width:170px;display:inline-block">{{ r.file_name }}</a>
             {% endif %}
             {% if r.submission_link %}
               <div><a href="{{ r.submission_link }}" target="_blank" rel="noopener"
                       class="sub">external link</a></div>
             {% endif %}
-            {% if not r.file_key and not r.submission_link %}<span class="sub">&mdash;</span>{% endif %}
-            {% if r.student_note %}<div class="sub" style="font-style:italic">“{{ r.student_note|truncate(60) }}”</div>{% endif %}
+            {% if not r.via_portal %}
+              <span class="sub">{{ r.received_note or '—' }}</span>
+            {% endif %}
+            {% if r.student_note %}
+              <div class="sub" style="font-style:italic">“{{ r.student_note|truncate(48) }}”</div>
+            {% endif %}
           </td>
+          {% endif %}
+
           <td>
             {% if r.state == 'Marked' %}<span class="pill pill-green">Marked</span>
-            {% elif r.state == 'Received' %}<span class="pill pill-blue">Received</span>
+            {% elif r.state == 'Received' %}
+              <span class="pill pill-blue">{{ 'Received' if r.via_portal else 'In hand' }}</span>
             {% elif r.state == 'Submitted' %}<span class="pill pill-amber">Submitted</span>
             {% else %}<span class="pill pill-gray">Not in</span>{% endif %}
           </td>
+
+          {% if a.needs_submission %}
           <td>
-            {% if r.state == 'Not Submitted' %}
-              <span class="sub">&mdash;</span>
-            {% elif r.received %}
+            {% if r.received %}
               <div class="sub">{{ r.received_at.strftime('%d %b %H:%M') if r.received_at }}</div>
               <form method="post" action="{{ url_for('teacher.confirm_received', rid=r.id) }}">
                 <input type="hidden" name="undo" value="1">
-                <button class="btn btn-xs btn-link">Withdraw</button>
+                <button class="btn btn-xs btn-link">Undo</button>
               </form>
             {% else %}
-              <form method="post" action="{{ url_for('teacher.confirm_received', rid=r.id) }}">
-                <button class="btn btn-xs btn-primary">Mark received</button>
+              <form method="post" action="{{ url_for('teacher.confirm_received', rid=r.id) }}"
+                    style="display:flex;gap:.25rem">
+                {% if not r.via_portal %}
+                  <input class="form-control" name="received_note" style="width:106px"
+                         placeholder="on paper">
+                {% endif %}
+                <button class="btn btn-xs btn-primary">
+                  {{ 'Mark received' if r.via_portal else 'I have it' }}</button>
               </form>
             {% endif %}
           </td>
+          {% endif %}
+
           <td>
-            {% if r.received %}
+            {% if r.can_mark %}
               <form method="post" action="{{ url_for('teacher.mark_one', rid=r.id) }}"
                     style="display:flex;gap:.3rem;align-items:center">
-                <input class="form-control" name="score" style="width:68px"
+                <input class="form-control" name="score" style="width:64px"
                        value="{{ r.score|round(1) if r.score is not none else '' }}"
                        placeholder="/{{ a.max_score|round(0)|int }}">
-                <input class="form-control" name="feedback" style="width:80px"
+                <input class="form-control" name="feedback" style="width:84px"
                        value="{{ r.feedback or '' }}" placeholder="note">
                 <button class="btn btn-xs btn-primary">Save</button>
               </form>
             {% else %}
-              <span class="sub">Confirm receipt first</span>
+              <span class="sub">Tick that you have it first</span>
             {% endif %}
           </td>
         </tr>
       {% else %}
-        <tr><td colspan="6"><div class="empty-line">Nobody on this course yet.</div></td></tr>
+        <tr><td colspan="6"><div class="empty-line">Nobody on this subject yet.</div></td></tr>
       {% endfor %}
       </tbody>
     </table>

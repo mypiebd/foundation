@@ -87,6 +87,7 @@
         <option value="">— choose a teacher —</option>
         {% for t in teachers_all %}
           <option value="{{ t.id }}"
+                  {{ 'selected' if prefill and prefill.teacher_id == t.id }}
                   data-hours="{{ t.hours_label }}"
                   data-off="{{ t.off_days_label }}">{{ t.full_name }}</option>
         {% endfor %}
@@ -121,7 +122,7 @@
         <div>
           <label class="form-label">First class</label>
           <input type="date" class="form-control" name="start_date"
-                 value="{{ today_str }}">
+                 value="{{ prefill.start_date if prefill and prefill.start_date else today.isoformat() }}">
         </div>
         <div>
           <label class="form-label">Runs</label>
@@ -459,7 +460,8 @@
     if (el) el.addEventListener('change', function () { estimate(); checkAll(); });
   });
 
-  addRow();   // start with one row
+  var seed = {{ (prefill or {}) | tojson }};
+  addRow(seed.slot_day, seed.slot_from, seed.slot_to);   // start with one row
   updateCount();
   teacherChanged();
   runsChanged();

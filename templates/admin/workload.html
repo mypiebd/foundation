@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Teacher load · PIE Scheduler{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Teacher load &amp; free time</h1>
+    <p class="page-sub">
+      Who is stacked, who has room, and which gaps are worth filling.
+    </p>
+  </div>
+</div>
+
+<div class="panel" style="margin-bottom:1.1rem;padding:.7rem .95rem">
+  <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <a class="btn btn-outline btn-sm"
+       href="{{ url_for('admin.workload', date=prev_d.isoformat(), gap=min_gap) }}">&larr; Previous</a>
+    <input type="date" class="form-control" name="date" value="{{ on.isoformat() }}"
+           onchange="this.form.submit()" style="width:168px">
+    <a class="btn btn-outline btn-sm" href="{{ url_for('admin.workload', gap=min_gap) }}">Today</a>
+    <a class="btn btn-outline btn-sm"
+       href="{{ url_for('admin.workload', date=next_d.isoformat(), gap=min_gap) }}">Next &rarr;</a>
+    <select class="form-select" name="gap" style="max-width:190px" onchange="this.form.submit()">
+      {% for v, l in [(30,'Gaps of 30 min or more'),(60,'Gaps of 1 hour or more'),
+                      (90,'Gaps of 1½ hours or more')] %}
+        <option value="{{ v }}" {{ 'selected' if min_gap == v }}>{{ l }}</option>
+      {% endfor %}
+    </select>
+    <span class="sub" style="margin-left:auto">{{ on.strftime('%A %d %B %Y') }}</span>
+  </form>
+</div>
+
+<div class="stat-row" style="margin-bottom:1.25rem">
+  <div class="stat-card"><div class="stat-value">{{ stats.classes }}</div>
+    <div class="stat-label">Classes today</div></div>
+  <div class="stat-card"><div class="stat-value">{{ (stats.taught // 60) }}h {{ stats.taught % 60 }}m</div>
+    <div class="stat-label">Taught</div></div>
+  <div class="stat-card"><div class="stat-value" style="color:var(--ok)">{{ (stats.free // 60) }}h</div>
+    <div class="stat-label">Free inside working hours</div></div>
+  <div class="stat-card"><div class="stat-value">{{ stats.used }}%</div>
+    <div class="stat-label">Of available time used</div></div>
+</div>
+
+{# ── the day grid ────────────────────────────────────────────────── #}
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0">The day, strip by strip</h2>
+    <span class="sub">
+      <span class="key k-class"></span> class
+      <span class="key k-break"></span> break
+      <span class="key k-free"></span> free
+      <span class="key k-off"></span> not working
+    </span>
+  </div>
+  <div class="grid-wrap">
+    <table class="tgrid">
+      <thead>
+        <tr><th class="tname"></th>
+        {% for t in grid.labels %}
+          <th class="tick">{% if t.minute == 0 %}{{ t.strftime('%-I') }}{% endif %}</th>
+        {% endfor %}
+        <th class="tsum">Taught</th><th class="tsum">Free</th></tr>
+      </thead>
+      <tbody>
+      {% for r in grid.rows %}
+        <tr>
+          <td class="tname">
+            <div class="td-name">{{ r.teacher.full_name }}</div>
+            <div class="sub">{{ r.hours }}</div>
+          </td>
+          {% for c in r.cells %}
+            <td class="cell c-{{ c.state }}" title="{{ c.label }}"></td>
+          {% endfor %}
+          <td class="tsum mono">{{ r.taught_mins // 60 }}h{{ '%02d'|format(r.taught_mins % 60) }}</td>
+          <td class="tsum mono" style="color:{{ 'var(--ok)' if r.free_mins >= 120 else 'inherit' }}">
+            {{ r.free_mins // 60 }}h{{ '%02d'|format(r.free_mins % 60) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── gaps worth filling ──────────────────────────────────────────── #}
+<div class="panel p-0" style="margin-bottom:1.25rem">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0">
+      Free slots <span class="count-pill">{{ gaps|length }}</span></h2>
+    <span class="sub">Inside working hours, {{ min_gap }} minutes or longer.
+      A slot marked <em>break needed first</em> follows two back-to-back classes,
+      so a booking there starts after the break.</span>
+  </div>
+  {% if gaps %}
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Teacher</th><th>From</th><th>To</th><th>Length</th><th></th></tr></thead>
+      <tbody>
+      {% for g in gaps %}
+      <tr>
+        <td class="td-name">{{ g.teacher.full_name }}</td>
+        <td class="nowrap mono">{{ g.start.strftime('%I:%M %p').lstrip('0') }}</td>
+        <td class="nowrap mono">{{ g.end.strftime('%I:%M %p').lstrip('0') }}</td>
+        <td>
+          {% if g.mins >= 120 %}<span class="pill pill-green">{{ g.mins // 60 }}h {{ g.mins % 60 }}m</span>
+          {% else %}<span class="pill pill-gray">{{ g.mins }} min</span>{% endif %}
+          {% if g.needs_break %}
+            <div class="sub" style="color:var(--wn)" title="{{ g.note }}">break needed first</div>
+          {% endif %}
+        </td>
+        <td>
+          <a class="btn btn-xs btn-primary"
+             href="{{ url_for('admin.class_new', teacher_id=g.teacher.id,
+                              start_date=on.isoformat(),
+                              slot_day=on.weekday(),
+                              slot_from=g.start.strftime('%H:%M'),
+                              slot_to=g.end.strftime('%H:%M')) }}">Put a class here</a>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-line">No gap of {{ min_gap }} minutes or more on this date.</p>
+  {% endif %}
+</div>
+
+{# ── the week ────────────────────────────────────────────────────── #}
+<div class="panel p-0">
+  <div class="panel-head" style="padding:.9rem 1.15rem .6rem">
+    <h2 class="panel-title" style="margin:0">Teaching load this week</h2>
+    <span class="sub">{{ week_from.strftime('%d %b') }} – {{ week_to.strftime('%d %b %Y') }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="list-table">
+      <thead><tr><th>Teacher</th><th>Classes</th><th>Taught</th>
+                 <th style="width:230px">Compared with the busiest</th>
+                 <th>Free</th><th>Time used</th></tr></thead>
+      <tbody>
+      {% for r in load %}
+      <tr>
+        <td class="td-name">{{ r.teacher.full_name }}</td>
+        <td class="mono">{{ r.classes }}</td>
+        <td class="mono nowrap">{{ r.taught // 60 }}h {{ r.taught % 60 }}m</td>
+        <td>
+          <div class="bar"><span style="width:{{ r.share }}%"></span></div>
+        </td>
+        <td class="mono nowrap">{{ r.free // 60 }}h</td>
+        <td>
+          {% if r.used >= 70 %}<span class="pill pill-red">{{ r.used }}%</span>
+          {% elif r.used >= 40 %}<span class="pill pill-amber">{{ r.used }}%</span>
+          {% else %}<span class="pill pill-green">{{ r.used }}%</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="padding:.7rem 1.15rem 0">
+    Time used is teaching against the hours they are available. A high figure
+    means little room left; a low one means capacity to sell.
+  </p>
+</div>
+
+<style>
+.grid-wrap{overflow-x:auto}
+table.tgrid{border-collapse:collapse;width:100%;min-width:760px}
+table.tgrid th.tick{font-size:.62rem;color:var(--ink-soft);font-weight:600;
+  padding:.25rem 0;text-align:left;border-bottom:1px solid var(--line)}
+td.tname,th.tname{padding:.4rem .8rem;min-width:158px;border-bottom:1px solid var(--line2)}
+td.tsum,th.tsum{padding:.4rem .7rem;font-size:.8rem;text-align:right;
+  border-bottom:1px solid var(--line2);white-space:nowrap}
+th.tsum{font-size:.64rem;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft)}
+td.cell{height:26px;min-width:15px;border-bottom:1px solid #fff;border-right:1px solid #fff}
+.c-class{background:#1D4ED8}
+.c-break{background:#F3D8AE}
+.c-free{background:#E7F4EC}
+.c-off{background:#EEF0F4}
+.key{display:inline-block;width:11px;height:11px;border-radius:2px;
+  vertical-align:middle;margin:0 .2rem 0 .55rem}
+.k-class{background:#1D4ED8} .k-break{background:#F3D8AE}
+.k-free{background:#E7F4EC;border:1px solid #B8E0C6} .k-off{background:#EEF0F4}
+.bar{background:var(--line2);border-radius:99px;height:9px;overflow:hidden}
+.bar span{display:block;height:100%;background:var(--red);border-radius:99px}
+</style>
+{% endblock %}

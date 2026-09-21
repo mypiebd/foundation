@@ -12,7 +12,10 @@ from helpers import (BREAK_AFTER, BREAK_MINS, active_teachers,
                      clear_orphan_slot_links,
                      analyse_slot, date_for_count, get_daily_schedule,
                      get_student_schedule,
-                     backup_database, expiring_classes,
+                     backup_database, clash_summary, clean_orphans, expiring_classes,
+                     purge_student,
+                     find_clashes, free_gaps, teacher_load_today,
+                     teacher_day_grid, teacher_week_load,
                      get_teacher_schedule, slot_options, stranded_students,
                      student_courses,
                      unlinked_schedules,
@@ -85,6 +88,12 @@ def overview():
 
     free = free_slots_today(today, min_mins=60)
 
+    # What is actually wrong with the timetable, and how the day is spread.
+    # Neither was ever surfaced — the clash checker only guarded new classes,
+    # so anything already booked badly stayed invisible.
+    clashes = clash_summary(days_ahead=30)
+    load = teacher_load_today(today)
+
     # Days where a teacher is stacked up with no break
     day_warnings = []
     for t in active_teachers():
@@ -110,7 +119,7 @@ def overview():
     # classes whose timetable is about to run out
     expiring = expiring_classes()
 
-    return render_template("admin/overview.html", expiring=expiring,
+    return render_template("admin/overview.html", clashes=clashes, load=load, expiring=expiring,
                            counts=counts, todays=todays, pending=pending[:10],
                            free=free, day_warnings=day_warnings,
                            at_risk=at_risk, setup=setup,
@@ -252,10 +261,15 @@ def students_action():
         if confirm != "DELETE":
             flash("Type DELETE in the confirmation box to permanently delete.", "danger")
             return redirect(request.form.get("back") or url_for("admin.students"))
+        names = []
         for p in people:
-            db.session.delete(p)
+            if p.role != "STUDENT":
+                continue          # the bulk tool is for students only
+            names.append(f"{p.id} '{p.full_name}'")
+            purge_student(p)
         db.session.commit()
-        flash(f"Permanently deleted {len(people)} student(s).", "success")
+        log_action("student-delete", f"Bulk: {len(names)} DELETED — " + "; ".join(names))
+        flash(f"Permanently deleted {len(names)} student(s).", "success")
 
     return redirect(request.form.get("back") or url_for("admin.students"))
 
@@ -339,10 +353,10 @@ def delete_student(sid):
         flash("Type DELETE to confirm permanent deletion.", "danger")
         return redirect(url_for("admin.student_profile", sid=sid))
     name = student.full_name
-    db.session.delete(student)
+    gone = purge_student(student)
     db.session.commit()
     flash(f"{name} permanently deleted.", "success")
-    log_action("student-delete", f"Student {sid} '{name}' DELETED")
+    log_action("student-delete", f"Student {sid} '{name}' DELETED ({gone})")
     return redirect(url_for("admin.students"))
 
 
@@ -1357,6 +1371,7 @@ def class_new():
                     "start_date": start.isoformat(),
                     "end_date": end.isoformat() if end else "",
                     "runs": runs,
+                    "num_classes": want,
                     "slots": [[wd, st.strftime("%H:%M"), en.strftime("%H:%M")]
                               for wd, st, en in slots],
                 }
@@ -1404,7 +1419,15 @@ def class_new():
         flash(msg + ".", "success" if res["made"] else "warning")
         return redirect(url_for("admin.class_detail", gid=g.id))
 
-    return render_template("admin/class_new.html",
+    # a free slot can hand us a teacher, a day and a time to start from
+    prefill = {
+        "teacher_id": request.args.get("teacher_id", type=int),
+        "start_date": request.args.get("start_date", ""),
+        "slot_day":   request.args.get("slot_day", ""),
+        "slot_from":  request.args.get("slot_from", ""),
+        "slot_to":    request.args.get("slot_to", ""),
+    }
+    return render_template("admin/class_new.html", prefill=prefill,
                            students=User.query.filter_by(role="STUDENT",
                                                          status="ACTIVE")
                                      .order_by(User.full_name).all(),
@@ -1481,7 +1504,26 @@ def class_create_resolved():
                                                student_id=sid))
         db.session.flush()
         r = generate_group(g)
-        total += r["made"]
+        made = r["made"]
+        want = payload.get("num_classes")
+        if want and payload.get("runs") == "count":
+            # the same trim as a straight create: keep exactly `want`, the
+            # earliest ones, and move the end date to the last one kept
+            share = want if len(by_teacher) == 1 else max(
+                1, round(want * len(rows) / max(1, len(keep))))
+            live = (g.sessions.filter(ClassSchedule.status == "Scheduled")
+                    .order_by(ClassSchedule.date, ClassSchedule.start_time).all())
+            for x in live[share:]:
+                db.session.delete(x)
+            db.session.flush()
+            kept = (g.sessions.filter(ClassSchedule.status == "Scheduled")
+                    .order_by(ClassSchedule.date).all())
+            if kept:
+                g.end_date = kept[-1].date
+                g.generated_to = g.end_date
+            db.session.commit()
+            made = len(kept)
+        total += made
         made_groups.append(g)
 
     skipped = len(slots) - len(keep)
@@ -2151,6 +2193,61 @@ def classes_extend_many():
         msg += f" {skipped} skipped for having no days set."
     flash(msg, "success" if done else "warning")
     return redirect(url_for("admin.classes"))
+
+
+@bp.route("/admin/workload")
+@login_required
+@admin_only
+def workload():
+    """
+    Who is stacked and who has room.
+
+    A day grid showing every teacher's hours strip by strip, the gaps worth
+    filling, and the week's teaching load side by side.
+    """
+    on = parse_date(request.args.get("date")) or date.today()
+    min_gap = request.args.get("gap", type=int) or 60
+    week_from = on - timedelta(days=on.weekday())
+    if week_from.weekday() != 5:          # weeks here start on Saturday
+        week_from = on - timedelta(days=(on.weekday() - 5) % 7)
+
+    grid = teacher_day_grid(on)
+    gaps = free_gaps(on, min_gap)
+    load = teacher_week_load(week_from)
+
+    total_taught = sum(r["taught_mins"] for r in grid["rows"])
+    total_free   = sum(r["free_mins"] for r in grid["rows"])
+    return render_template(
+        "admin/workload.html", on=on, grid=grid, gaps=gaps, load=load,
+        week_from=week_from, week_to=week_from + timedelta(days=6),
+        min_gap=min_gap,
+        prev_d=on - timedelta(days=1), next_d=on + timedelta(days=1),
+        stats={"taught": total_taught, "free": total_free,
+               "classes": sum(r["classes"] for r in grid["rows"]),
+               "gaps": len(gaps),
+               "used": round(total_taught / (total_taught + total_free) * 100)
+                       if (total_taught + total_free) else 0},
+        **_lists())
+
+
+@bp.route("/admin/clashes")
+@login_required
+@admin_only
+def clashes():
+    """
+    Every conflict already on the timetable.
+
+    The clash checker stops a new class being created badly. This catches what
+    slipped in another way — an import, a teacher's days off changing after
+    the fact, a student added to a second class at the same hour.
+    """
+    days = request.args.get("days", type=int) or 30
+    kind = request.args.get("kind", "")
+    rows = find_clashes(date.today(), date.today() + timedelta(days=days))
+    if kind:
+        rows = [r for r in rows if r["kind"] == kind]
+    return render_template("admin/clashes.html", rows=rows, days=days,
+                           kind=kind, summary=clash_summary(days), **_lists())
 
 
 @bp.route("/admin/data-check")

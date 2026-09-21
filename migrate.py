@@ -54,6 +54,7 @@ NEW_COLUMNS = [
     ("course",         "learning_hours",  "INTEGER"),
     ("course",         "assessment",      "TEXT"),
     ("course",         "outcomes",        "TEXT"),
+    ("result",         "received_note",   "VARCHAR(255)"),
 ]
 
 
@@ -174,6 +175,25 @@ def main():
             print("   -> review these under Classes > Data check in the app")
 
     if not DRY:
+        con.commit()
+
+    # ── 3a. rows pointing at a student who no longer exists ─────────────
+    print("\nORPHANED ROWS")
+    fixed = 0
+    for table in ["group_student", "class_assignment", "result",
+                  "attendance", "schedule_attendance"]:
+        n = c.execute(f"SELECT COUNT(*) FROM {table} WHERE student_id IS NOT NULL "
+                      f"AND student_id NOT IN (SELECT id FROM user)").fetchone()[0]
+        if n:
+            print(f"   {table:<22}{n} row(s) for a deleted student"
+                  + ("" if DRY else " — removed"))
+            if not DRY:
+                c.execute(f"DELETE FROM {table} WHERE student_id IS NOT NULL "
+                          f"AND student_id NOT IN (SELECT id FROM user)")
+            fixed += n
+    if not fixed:
+        print("   none")
+    elif not DRY:
         con.commit()
 
     # ── 3b. the retired batch table ─────────────────────────────────────
